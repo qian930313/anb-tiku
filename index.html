@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1668dc">
+<title>安管人员B类 · 能力考核刷题</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="assets/icon-192.png">
+<link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="安B刷题">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+
+<!-- ============ 首页 ============ -->
+<section id="view-home" class="view">
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div class="brand">
+        <span class="brand-mark">B</span>
+        <div>
+          <h1>安管人员 B 类</h1>
+          <p>项目负责人 · 三个科目 · 共 4685 题</p>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main class="page">
+    <div class="stat-row" id="stat-row"></div>
+
+    <h2 class="section-title">选择题库</h2>
+    <div class="section-hint">共 4685 题 · 对应三个题库文件夹</div>
+    <div class="bank-grid">
+      <button class="bank-card bank-all" data-bank="all">
+        <div class="bank-top"><span class="bank-name">全部题库</span><span class="bank-badge">4685</span></div>
+        <div class="bank-desc">三个题库混合练习</div>
+        <div class="bank-meta"><span>判断 1481</span><span>单选 3134</span><span>多选 70</span></div>
+      </button>
+      <button class="bank-card" data-bank="c">
+        <div class="bank-top"><span class="bank-name">三类题库（理论考核）</span><span class="bank-badge">3817</span></div>
+        <div class="bank-desc">整卷顺序 / 随机练习</div>
+        <div class="bank-meta"><span>判断 1160</span><span>单选 2657</span></div>
+      </button>
+      <button class="bank-card" data-bank="a">
+        <div class="bank-top"><span class="bank-name">安管人员B类能力考核题</span><span class="bank-badge">380</span></div>
+        <div class="bank-desc">全部配图</div>
+        <div class="bank-meta"><span>判断 110</span><span>单选 200</span><span>多选 70</span></div>
+      </button>
+      <button class="bank-card" data-bank="b">
+        <div class="bank-top"><span class="bank-name">能力考核题库（B类人员）</span><span class="bank-badge">488</span></div>
+        <div class="bank-desc">全部配图</div>
+        <div class="bank-meta"><span>判断 211</span><span>单选 277</span></div>
+      </button>
+    </div>
+
+    <h2 class="section-title">练习方式</h2>
+    <div class="quick-grid">
+      <button class="quick-card" id="btn-continue">
+        <span class="qi">▶</span><b>继续练习</b><small id="continue-sub">暂无记录</small>
+      </button>
+      <button class="quick-card" id="btn-wrong">
+        <span class="qi">↺</span><b>错题重做</b><small id="wrong-sub">0 题</small>
+      </button>
+      <button class="quick-card" id="btn-fav">
+        <span class="qi">★</span><b>我的收藏</b><small id="fav-sub">0 题</small>
+      </button>
+      <button class="quick-card" id="btn-random">
+        <span class="qi">⤨</span><b>随机抽题</b><small>每轮 30 题</small>
+      </button>
+      <button class="quick-card wide" id="btn-notes">
+        <span class="qi">✎</span><b>我的批注</b><small id="note-sub">还没有批注</small>
+      </button>
+    </div>
+
+    <h2 class="section-title">模拟考试</h2>
+    <div class="chip-row scope-row" id="exam-scope">
+      <button class="chip chip-on" data-scope="ab">B类能力考核</button>
+      <button class="chip" data-scope="c">三类题库（理论）</button>
+      <button class="chip" data-scope="all">全部混合</button>
+    </div>
+    <div class="exam-grid">
+      <button class="exam-card" data-exam="quick">
+        <b>快速模考</b><small>30 题 · 25 分钟</small><em>判断10 单选15 多选5</em>
+      </button>
+      <button class="exam-card" data-exam="full">
+        <b>标准模考</b><small>100 题 · 60 分钟</small><em>判断30 单选50 多选20</em>
+      </button>
+    </div>
+
+    <h2 class="section-title">按题型专项练习</h2>
+    <div class="chip-row">
+      <button class="chip" data-type="judge">判断题 <i>1481</i></button>
+      <button class="chip" data-type="single">单选题 <i>3134</i></button>
+      <button class="chip" data-type="multi">多选题 <i>70</i></button>
+    </div>
+
+    <div class="footer-note">
+      题库来源：安全B证考核题库原件 · 共 4685 题<br>三类题库（理论考核）3817 + 安管人员B类能力考核题 380 + 能力考核题库（B类人员）488<br>B类两套共 868 题，全部配图一一对应<br>
+      学习记录保存在本机浏览器，可离线使用
+      <div class="footer-actions">
+        <button class="link-btn" id="btn-export-md">导出批注 Markdown</button>
+        <button class="link-btn" id="btn-export-json">备份全部记录</button>
+        <button class="link-btn" id="btn-import">导入备份</button>
+        <button class="link-btn danger" id="btn-reset">清空所有学习记录</button>
+      </div>
+      <input type="file" id="import-file" accept=".json,application/json" hidden>
+    </div>
+  </main>
+</section>
+
+<!-- ============ 练习页 ============ -->
+<section id="view-quiz" class="view" hidden>
+  <header class="quizbar">
+    <button class="home-btn" id="quiz-exit" aria-label="回到首页" title="回到首页">
+      <span class="hb-ico">←</span><span class="hb-txt">首页</span>
+    </button>
+    <div class="quizbar-mid">
+      <div class="quizbar-title" id="quiz-title">练习</div>
+      <div class="progress"><div class="progress-fill" id="quiz-progress"></div></div>
+    </div>
+    <div class="quiz-counter" id="quiz-counter">1/1</div>
+  </header>
+
+  <main class="page quiz-page">
+    <div class="q-tags">
+      <span class="tag tag-type" id="q-type">单选题</span>
+      <span class="tag" id="q-source">安管B类考核 · 第1题</span>
+    </div>
+    <div class="q-stem" id="q-stem"></div>
+    <figure class="q-figure" id="q-figure">
+      <img id="q-img" alt="题目配图" loading="lazy">
+      <figcaption>点击图片可放大查看</figcaption>
+    </figure>
+    <div class="options" id="q-options"></div>
+    <div class="verdict" id="q-verdict" hidden></div>
+    <div class="note-slot" id="q-note"></div>
+    <div class="q-actions">
+      <button class="btn btn-ghost" id="btn-fav-q" title="收藏本题">☆ 收藏</button>
+      <button class="btn btn-ghost" id="btn-note-q" title="给本题写批注">✎ 批注</button>
+      <button class="btn btn-primary" id="btn-submit" hidden>提交答案</button>
+    </div>
+    <div class="q-home">
+      <button class="btn btn-home" id="btn-home-q">⌂ 回到首页</button>
+      <span class="q-home-tip">进度会自动保存，下次可继续</span>
+    </div>
+  </main>
+
+  <footer class="quizfoot">
+    <button class="nav-btn" id="nav-prev">上一题</button>
+    <button class="nav-btn" id="nav-jump">跳转</button>
+    <button class="nav-btn nav-go" id="nav-next">下一题</button>
+  </footer>
+
+  <div class="finish-mask" id="finish-panel" hidden>
+    <div class="finish-card">
+      <div class="finish-title" id="fin-title">本组完成</div>
+      <div class="finish-acc" id="fin-acc">0%</div>
+      <div class="finish-detail" id="fin-detail"></div>
+      <div class="finish-actions">
+        <button class="btn btn-ghost" id="fin-home">返回首页</button>
+        <button class="btn btn-primary" id="fin-wrong">练错题</button>
+      </div>
+      <button class="link-btn" id="fin-again">再做一遍本题组</button>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 考试页 ============ -->
+<section id="view-exam" class="view" hidden>
+  <header class="quizbar exambar">
+    <button class="icon-btn" id="exam-exit" aria-label="退出">✕</button>
+    <div class="quizbar-mid">
+      <div class="quizbar-title" id="exam-title">模拟考试</div>
+      <div class="progress"><div class="progress-fill" id="exam-progress"></div></div>
+    </div>
+    <div class="timer" id="exam-timer">--:--</div>
+  </header>
+
+  <main class="page quiz-page">
+    <div class="q-tags">
+      <span class="tag tag-type" id="e-type">单选题</span>
+      <span class="tag" id="e-no">第 1 题</span>
+    </div>
+    <div class="q-stem" id="e-stem"></div>
+    <figure class="q-figure" id="e-figure">
+      <img id="e-img" alt="题目配图" loading="lazy">
+      <figcaption>点击图片可放大查看</figcaption>
+    </figure>
+    <div class="options" id="e-options"></div>
+    <div class="note-slot" id="e-note"></div>
+  </main>
+
+  <footer class="quizfoot">
+    <button class="nav-btn" id="e-prev">上一题</button>
+    <button class="nav-btn" id="e-sheet">答题卡</button>
+    <button class="nav-btn nav-go" id="e-next">下一题</button>
+  </footer>
+</section>
+
+<!-- ============ 成绩页 ============ -->
+<section id="view-result" class="view" hidden>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div class="brand"><span class="brand-mark">✓</span><div><h1>交卷结果</h1><p id="result-sub"></p></div></div>
+    </div>
+  </header>
+  <main class="page">
+    <div class="score-card">
+      <div class="score-ring" id="score-ring"><span id="score-num">0</span><small>分</small></div>
+      <div class="score-info">
+        <div id="score-verdict" class="verdict-line"></div>
+        <div class="score-detail" id="score-detail"></div>
+      </div>
+    </div>
+    <div class="result-actions">
+      <button class="btn btn-primary btn-block" id="btn-review">查看错题解析</button>
+      <button class="btn btn-ghost btn-block" id="btn-again">再考一次</button>
+      <button class="btn btn-ghost btn-block" id="btn-home">返回首页</button>
+    </div>
+  </main>
+</section>
+
+<!-- ============ 错题本 / 收藏 ============ -->
+<section id="view-list" class="view" hidden>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <button class="icon-btn" id="list-back">←</button>
+      <div class="brand"><div><h1 id="list-title">错题本</h1><p id="list-sub"></p></div></div>
+      <button class="icon-btn list-export" id="list-export" hidden title="导出批注">⤓</button>
+    </div>
+  </header>
+  <main class="page">
+    <div id="list-body"></div>
+  </main>
+</section>
+
+<!-- 答题卡抽屉 -->
+<div class="drawer-mask" id="drawer-mask" hidden>
+  <div class="drawer">
+    <div class="drawer-head">
+      <b>答题卡 <span class="sheet-count" id="sheet-count"></span></b>
+      <button class="icon-btn" id="drawer-close">✕</button>
+    </div>
+    <div class="drawer-legend">
+      <span><i class="dot dot-done"></i>已答</span>
+      <span><i class="dot"></i>未答</span>
+      <span><i class="dot dot-cur"></i>当前</span>
+      <span><i class="dot dot-note"></i>有批注</span>
+    </div>
+    <div class="sheet-grid" id="sheet-grid"></div>
+    <button class="btn btn-primary btn-block" id="btn-handin">交卷</button>
+  </div>
+</div>
+
+<!-- 批注弹窗 -->
+<div class="note-mask" id="note-modal" hidden>
+  <div class="note-dialog">
+    <div class="note-head">
+      <b id="note-title">本题批注</b>
+      <button class="icon-btn" id="note-close">✕</button>
+    </div>
+    <div class="note-stem" id="note-stem"></div>
+    <div class="note-ansline" id="note-hint"></div>
+    <div class="note-chips">
+      <span class="chip-label">快捷插入</span>
+      <span class="note-tags" id="note-tags"></span>
+    </div>
+    <textarea id="note-input" rows="5" placeholder="写下错误原因、记忆口诀、易混点…"></textarea>
+    <div class="note-actions">
+      <button class="btn btn-ghost btn-sm" id="note-del">删除</button>
+      <span class="flex-spacer"></span>
+      <button class="btn btn-ghost" id="note-cancel">取消</button>
+      <button class="btn btn-primary" id="note-save">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- 导出面板（下载被浏览器拦截时的兜底） -->
+<div class="note-mask" id="export-modal" hidden>
+  <div class="note-dialog">
+    <div class="note-head">
+      <b id="export-title">导出</b>
+      <button class="icon-btn" id="export-close">✕</button>
+    </div>
+    <div class="note-tip" id="export-tip"></div>
+    <textarea id="export-text" rows="10"></textarea>
+    <div class="note-actions">
+      <button class="btn btn-ghost" id="export-copy">复制全部</button>
+      <span class="flex-spacer"></span>
+      <button class="btn btn-ghost" id="export-dl">下载文件</button>
+      <button class="btn btn-primary" id="export-ok">完成</button>
+    </div>
+  </div>
+</div>
+
+<!-- 图片放大 -->
+<div class="lightbox" id="lightbox" hidden>
+  <button class="lightbox-close" id="lightbox-close">✕</button>
+  <img id="lightbox-img" alt="">
+</div>
+
+<script src="data/questions.js"></script>
+<script src="assets/app.js"></script>
+</body>
+</html>
