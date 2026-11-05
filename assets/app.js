@@ -834,44 +834,48 @@
     catch (e) { toast('复制失败，请手动全选复制'); }
   }
 
+  function applyBackup(data) {
+    if (!data || !data.notes) return toast('不是有效的备份文件');
+    var n = 0;
+    Object.keys(data.notes).forEach(function (id) {
+      if (!QMAP[id]) return;
+      var v = data.notes[id];
+      var t = (typeof v === 'string') ? v : (v && v.t) || '';
+      if (!t) return;
+      var old = store.notes[id];
+      // 两边都有内容且不同 → 合并，保留较长的并追加
+      if (old && old.t && old.t !== t) {
+        store.notes[id] = { t: (old.t.length >= t.length ? old.t : t) + '\n---\n' + (old.t.length >= t.length ? t : old.t), ts: Date.now() };
+      } else {
+        store.notes[id] = { t: t, ts: (v && v.ts) || Date.now() };
+      }
+      n++;
+    });
+    ['fav', 'wrong', 'rec'].forEach(function (k) {
+      if (!data[k]) return;
+      Object.keys(data[k]).forEach(function (id) {
+        if (!QMAP[id]) return;
+        if (k === 'rec') {
+          var a = store.rec[id] || { c: 0, w: 0, s: 0, ts: 0 }, b = data.rec[id];
+          store.rec[id] = {
+            c: Math.max(a.c, b.c || 0), w: Math.max(a.w, b.w || 0),
+            s: Math.max(a.s, b.s || 0), ts: Math.max(a.ts, b.ts || 0)
+          };
+        } else if (!store[k][id]) store[k][id] = data[k][id];
+      });
+    });
+    saveStore();
+    renderHome();
+    toast('已同步 ' + n + ' 条批注、' + Object.keys(data.fav || {}).length + ' 收藏、' + Object.keys(data.wrong || {}).length + ' 错题');
+  }
+
   function importBackup(file) {
     var fr = new FileReader();
     fr.onload = function () {
       var data;
       try { data = JSON.parse(fr.result); }
       catch (e) { return toast('文件格式不正确'); }
-      if (!data || !data.notes) return toast('不是有效的备份文件');
-      var n = 0;
-      Object.keys(data.notes).forEach(function (id) {
-        if (!QMAP[id]) return;
-        var v = data.notes[id];
-        var t = (typeof v === 'string') ? v : (v && v.t) || '';
-        if (!t) return;
-        var old = store.notes[id];
-        // 两边都有内容且不同 → 合并，保留较长的并追加
-        if (old && old.t && old.t !== t) {
-          store.notes[id] = { t: (old.t.length >= t.length ? old.t : t) + '\n---\n' + (old.t.length >= t.length ? t : old.t), ts: Date.now() };
-        } else {
-          store.notes[id] = { t: t, ts: (v && v.ts) || Date.now() };
-        }
-        n++;
-      });
-      ['fav', 'wrong', 'rec'].forEach(function (k) {
-        if (!data[k]) return;
-        Object.keys(data[k]).forEach(function (id) {
-          if (!QMAP[id]) return;
-          if (k === 'rec') {
-            var a = store.rec[id] || { c: 0, w: 0, s: 0, ts: 0 }, b = data.rec[id];
-            store.rec[id] = {
-              c: Math.max(a.c, b.c || 0), w: Math.max(a.w, b.w || 0),
-              s: Math.max(a.s, b.s || 0), ts: Math.max(a.ts, b.ts || 0)
-            };
-          } else if (!store[k][id]) store[k][id] = data[k][id];
-        });
-      });
-      saveStore();
-      renderHome();
-      toast('已导入 ' + n + ' 条批注');
+      applyBackup(data);
     };
     fr.readAsText(file);
   }
@@ -1010,6 +1014,21 @@
       var f = this.files && this.files[0];
       if (f) importBackup(f);
       this.value = '';
+    };
+    $('btn-cloud').onclick = function () {
+      if (location.protocol === 'file:') return toast('请在线上版（手机或网址打开）使用');
+      var btn = this;
+      btn.textContent = '正在拉取…';
+      fetch('sync.json?ts=' + Date.now(), { cache: 'no-store' }).then(function (r) {
+        if (!r.ok) throw new Error(r.status);
+        return r.json();
+      }).then(function (data) {
+        applyBackup(data);
+      }).catch(function () {
+        toast('拉取失败：云端还没有备份，请先在电脑端同步');
+      }).then(function () {
+        btn.textContent = '从云端拉取电脑端记录';
+      });
     };
 
     $('exam-exit').onclick = function () {
