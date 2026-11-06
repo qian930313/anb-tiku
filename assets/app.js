@@ -11,6 +11,18 @@
   (DATA.cases || []).forEach(function (c) { CMAP[c.id] = c.material; });
 
   var KEY = 'anb_exam_v1';
+  var TOKEN_KEY = 'anb_gh_token';
+  var SYNC = { owner: 'qian930313', repo: 'anb-tiku', branch: 'sync-data', path: 'sync.json' };
+  // URL 带 ?token=ghp_xxx → 保存后立刻从地址栏抹掉（手机扫码配对用）
+  (function () {
+    try {
+      var m = location.search.match(/[?&]token=(ghp_[A-Za-z0-9]+|github_pat_[A-Za-z0-9_]+)/);
+      if (m) {
+        localStorage.setItem(TOKEN_KEY, m[1]);
+        if (history.replaceState) history.replaceState(null, '', location.pathname);
+      }
+    } catch (e) {}
+  })();
   var store = loadStore();
   var ses = null;      // 练习会话
   var exam = null;     // 考试会话
@@ -851,39 +863,200 @@
     catch (e) { toast('复制失败，请手动全选复制'); }
   }
 
-  function applyBackup(data) {
-    if (!data || !data.notes) return toast('不是有效的备份文件');
-    var n = 0;
-    Object.keys(data.notes).forEach(function (id) {
+  // 两份学习记录取并集（规则：批注去重拼接 / 收藏并集 / 错题取大 / 练习逐项取大）
+  function mergeStores(a, b) {
+    var out = {
+      rec: a.rec || {}, fav: a.fav || {}, wrong: a.wrong || {},
+      exams: a.exams || {}, notes: a.notes || {}
+    };
+    Object.keys(b.notes || {}).forEach(function (id) {
       if (!QMAP[id]) return;
-      var v = data.notes[id];
+      var v = b.notes[id];
       var t = (typeof v === 'string') ? v : (v && v.t) || '';
       if (!t) return;
-      var old = store.notes[id];
-      // 两边都有内容且不同 → 合并，保留较长的并追加
-      if (old && old.t && old.t !== t) {
-        store.notes[id] = { t: (old.t.length >= t.length ? old.t : t) + '\n---\n' + (old.t.length >= t.length ? t : old.t), ts: Date.now() };
-      } else {
-        store.notes[id] = { t: t, ts: (v && v.ts) || Date.now() };
-      }
-      n++;
+      var old = out.notes[id];
+      var o = old && old.t ? old.t : '';
+      var ts = Math.max((old && old.ts) || 0, (v && v.ts) || 0);
+      if (!o || o === t || o.indexOf(t) >= 0) out.notes[id] = { t: o.length >= t.length ? o : t, ts: ts };
+      else if (t.indexOf(o) >= 0) out.notes[id] = { t: t, ts: ts };
+      else out.notes[id] = { t: t + '\n---\n' + o, ts: Math.max(Date.now(), ts) };
     });
-    ['fav', 'wrong', 'rec'].forEach(function (k) {
-      if (!data[k]) return;
-      Object.keys(data[k]).forEach(function (id) {
-        if (!QMAP[id]) return;
-        if (k === 'rec') {
-          var a = store.rec[id] || { c: 0, w: 0, s: 0, ts: 0 }, b = data.rec[id];
-          store.rec[id] = {
-            c: Math.max(a.c, b.c || 0), w: Math.max(a.w, b.w || 0),
-            s: Math.max(a.s, b.s || 0), ts: Math.max(a.ts, b.ts || 0)
-          };
-        } else if (!store[k][id]) store[k][id] = data[k][id];
+    ['fav', 'exams'].forEach(function (k) {
+      Object.keys(b[k] || {}).forEach(function (id) {
+        if (out[k][id] === undefined) out[k][id] = b[k][id];
       });
     });
+    Object.keys(b.wrong || {}).forEach(function (id) {
+      if (!QMAP[id]) return;
+      var c = b.wrong[id];
+      if (typeof c !== 'number') c = 1;
+      out.wrong[id] = Math.max(out.wrong[id] || 0, c);
+    });
+    Object.keys(b.rec || {}).forEach(function (id) {
+      if (!QMAP[id]) return;
+      var r = b.rec[id] || {}, o = out.rec[id] || {};
+      out.rec[id] = {
+        c: Math.max(o.c || 0, r.c || 0), w: Math.max(o.w || 0, r.w || 0),
+        s: Math.max(o.s || 0, r.s || 0), ts: Math.max(o.ts || 0, r.ts || 0)
+      };
+    });
+    return out;
+  }
+
+  function adoptMerged(merged) {
+    store.notes = merged.notes;
+    store.fav = merged.fav;
+    store.wrong = merged.wrong;
+    store.rec = merged.rec;
+    store.exams = merged.exams;
     saveStore();
     renderHome();
-    toast('已同步 ' + n + ' 条批注、' + Object.keys(data.fav || {}).length + ' 收藏、' + Object.keys(data.wrong || {}).length + ' 错题');
+  }
+
+  function applyBackup(data) {
+    if (!data || !data.notes) return toast('不是有效的备份文件');
+    var merged = mergeStores(store, data);
+    adoptMerged(merged);
+    toast('已同步 ' + Object.keys(data.notes).length + ' 条批注、' +
+          Object.keys(data.fav || {}).length + ' 收藏、' + Object.keys(data.wrong || {}).length + ' 错题');
+  }
+
+  /* ---------------- 云端仓库同步（sync-data 分支） ---------------- */
+  function ghToken() {
+    try { return localStorage.getItem(TOKEN_KEY) || ''; } catch (e) { return ''; }
+  }
+  function ghHeaders(withJson) {
+    var t = ghToken();
+    var h = { 'Accept': 'application/vnd.github+json' };
+    if (t) h['Authorization'] = 'Bearer ' + t;
+    if (withJson) h['Content-Type'] = 'application/json';
+    return h;
+  }
+  function apiUrl(p) {
+    return 'https://api.github.com/repos/' + SYNC.owner + '/' + SYNC.repo + p;
+  }
+  function b64ToUtf8(s) {
+    var bin = atob(String(s).replace(/\s/g, ''));
+    var bytes = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return new TextDecoder('utf-8').decode(bytes);
+  }
+  function utf8ToB64(s) {
+    return btoa(unescape(encodeURIComponent(s)));
+  }
+  // 读云端：走不可变的 git 数据 API（ref → tree → blob），避开 contents API 的 CDN 缓存
+  function fetchCloudBlob() {
+    return fetch(apiUrl('/git/trees/' + SYNC.branch), { headers: ghHeaders(false), cache: 'no-store' })
+      .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+      .then(function (tr) {
+        var e = null;
+        (tr.tree || []).forEach(function (x) {
+          if (x.path === SYNC.path && x.type === 'blob') e = x;
+        });
+        if (!e) return { data: null, sha: null };
+        return fetch(apiUrl('/git/blobs/' + e.sha), { headers: ghHeaders(false), cache: 'no-store' })
+          .then(function (r2) {
+            if (!r2.ok) throw new Error('HTTP ' + r2.status);
+            return r2.json();
+          })
+          .then(function (b) { return { data: JSON.parse(b64ToUtf8(b.content)), sha: e.sha }; });
+      });
+  }
+  function fetchCloudFile(tries) {
+    tries = tries || 0;
+    return fetchCloudBlob().catch(function (e) {
+      if (tries < 2) {
+        return new Promise(function (res) { setTimeout(res, 1500 * (tries + 1)); })
+          .then(function () { return fetchCloudFile(tries + 1); });
+      }
+      throw e;
+    });
+  }
+  function ensureBranch() {
+    return fetch(apiUrl('/git/ref/heads/' + SYNC.branch), { headers: ghHeaders(false) })
+      .then(function (r) {
+        if (r.ok) return null;
+        return fetch(apiUrl('/git/ref/heads/main'), { headers: ghHeaders(false) })
+          .then(function (r2) {
+            if (!r2.ok) throw new Error('读不到主分支');
+            return r2.json();
+          })
+          .then(function (j) {
+            return fetch(apiUrl('/git/refs'), {
+              method: 'POST', headers: ghHeaders(true),
+              body: JSON.stringify({ ref: 'refs/heads/' + SYNC.branch, sha: j.object.sha })
+            }).then(function (r3) {
+              if (!r3.ok && r3.status !== 422) throw new Error('创建同步分支失败');
+              return null;
+            });
+          });
+      });
+  }
+  function pullCloud() {
+    var btn = $('btn-cloud');
+    btn.textContent = '正在拉取…';
+    fetchCloudFile()
+      .then(function (res) {
+        if (!res.data) throw new Error('no-file');
+        applyBackup(res.data);
+      })
+      .catch(function () {
+        // 云端 API 失败时退回站点内的静态副本
+        return fetch('sync.json?ts=' + Date.now(), { cache: 'no-store' })
+          .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
+          .then(applyBackup);
+      })
+      .catch(function () {
+        toast('拉取失败：云端还没有同步数据');
+      })
+      .then(function () { btn.textContent = '从云端拉取记录'; });
+  }
+  // 上传一次：读云端 → 并集 → 写回。云端版本有变化（422）时自动重取重试
+  function pushOnce(attempt) {
+    attempt = attempt || 0;
+    return ensureBranch()
+      .then(fetchCloudFile)
+      .then(function (res) {
+        var merged = mergeStores(store, res.data || {});
+        merged.app = 'anb-exam';
+        merged.v = 1;
+        merged.exported = new Date().toISOString();
+        // 云端可能有别的设备的新数据 → 合并结果同时落到本机
+        adoptMerged(merged);
+        var body = {
+          message: 'sync ' + new Date().toISOString().slice(0, 19).replace('T', ' '),
+          content: utf8ToB64(JSON.stringify(merged)),
+          branch: SYNC.branch
+        };
+        if (res.sha) body.sha = res.sha;
+        return fetch(apiUrl('/contents/' + SYNC.path), {
+          method: 'PUT', headers: ghHeaders(true), body: JSON.stringify(body)
+        }).then(function (r) {
+          if (r.status === 422 && attempt < 2) return pushOnce(attempt + 1);   // 版本冲突：重读重试
+          if (!r.ok) throw new Error('HTTP ' + r.status + '（令牌权限不足或已过期？）');
+          return null;
+        });
+      });
+  }
+  function pushCloud() {
+    if (!ghToken()) {
+      $('btn-token').click();
+      return toast('上传需要 GitHub 令牌，请先在弹窗里粘贴');
+    }
+    var btn = $('btn-push');
+    btn.textContent = '正在上传…';
+    pushOnce()
+      .then(function () { toast('已上传到云端（合并后共 ' + Object.keys(store.wrong).length + ' 条错题记录）'); })
+      .catch(function (e) { toast('上传失败：' + (e.message || e)); })
+      .then(function () { btn.textContent = '上传本机记录到云端'; });
+  }
+  function openTokenModal() {
+    var t = ghToken();
+    $('token-input').value = t;
+    $('token-state').textContent = t
+      ? ('已设置令牌 ' + t.slice(0, 7) + '…' + t.slice(-4))
+      : '未设置令牌（拉取不需要令牌，上传需要）';
+    $('token-modal').hidden = false;
   }
 
   function importBackup(file) {
@@ -1032,20 +1205,28 @@
       if (f) importBackup(f);
       this.value = '';
     };
-    $('btn-cloud').onclick = function () {
-      if (location.protocol === 'file:') return toast('请在线上版（手机或网址打开）使用');
-      var btn = this;
-      btn.textContent = '正在拉取…';
-      fetch('sync.json?ts=' + Date.now(), { cache: 'no-store' }).then(function (r) {
-        if (!r.ok) throw new Error(r.status);
-        return r.json();
-      }).then(function (data) {
-        applyBackup(data);
-      }).catch(function () {
-        toast('拉取失败：云端还没有备份，请先在电脑端同步');
-      }).then(function () {
-        btn.textContent = '从云端拉取电脑端记录';
-      });
+    $('btn-cloud').onclick = pullCloud;
+    $('btn-push').onclick = pushCloud;
+    $('btn-token').onclick = openTokenModal;
+    $('token-close').onclick = $('token-cancel').onclick = function () { $('token-modal').hidden = true; };
+    $('token-save').onclick = function () {
+      var v = $('token-input').value.trim();
+      if (v && !/^(ghp_|github_pat_)/.test(v)) return toast('令牌应以 ghp_ 或 github_pat_ 开头');
+      try {
+        if (v) localStorage.setItem(TOKEN_KEY, v);
+        else localStorage.removeItem(TOKEN_KEY);
+      } catch (e) { return toast('保存失败'); }
+      $('token-modal').hidden = true;
+      toast(v ? '令牌已保存（仅存本机）' : '令牌已清除');
+    };
+    $('token-clear').onclick = function () {
+      try { localStorage.removeItem(TOKEN_KEY); } catch (e) {}
+      $('token-input').value = '';
+      $('token-state').textContent = '未设置令牌';
+      toast('令牌已清除');
+    };
+    $('token-modal').onclick = function (e) {
+      if (e.target === $('token-modal')) $('token-modal').hidden = true;
     };
 
     $('exam-exit').onclick = function () {
@@ -1100,6 +1281,7 @@
         // 有浮层时先关浮层（图片放大/导出面板已各自处理）
         if (!$('lightbox').hidden) { $('lightbox').hidden = true; return; }
         if (!$('export-modal').hidden) { $('export-modal').hidden = true; return; }
+        if (!$('token-modal').hidden) { $('token-modal').hidden = true; return; }
         e.preventDefault(); exitQuiz(); return;
       }
       if (k === 'n' && !e.ctrlKey && !e.metaKey) {
