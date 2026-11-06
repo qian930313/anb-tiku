@@ -987,9 +987,23 @@
     return Math.floor(sec / 86400) + ' 天前';
   }
 
+  // 带超时的 fetch：raw.githubusercontent.com 在部分网络下会"连上但不返回"，
+  // 不加超时会把整次同步永久挂住（表现为一直停在未配对/同步中）
+  function fetchT(url, opts, ms) {
+    opts = opts || {};
+    ms = ms || 8000;
+    if (typeof AbortController === 'undefined') return fetch(url, opts);
+    var ac = new AbortController();
+    var tid = setTimeout(function () { try { ac.abort(); } catch (e) {} }, ms);
+    opts.signal = ac.signal;
+    var done = function () { clearTimeout(tid); };
+    return fetch(url, opts).then(function (r) { done(); return r; },
+                                 function (e) { done(); throw e; });
+  }
+
   // 读云端：走不可变的 git 数据 API（ref → tree → blob），避开 contents API 的 CDN 缓存
   function fetchCloudBlob() {
-    return fetch(apiUrl('/git/trees/' + SYNC.branch), { headers: ghHeaders(false), cache: 'no-store' })
+    return fetchT(apiUrl('/git/trees/' + SYNC.branch), { headers: ghHeaders(false), cache: 'no-store' })
       .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
       .then(function (tr) {
         var e = null;
@@ -997,7 +1011,7 @@
           if (x.path === SYNC.path && x.type === 'blob') e = x;
         });
         if (!e) return { data: null, sha: null };
-        return fetch(apiUrl('/git/blobs/' + e.sha), { headers: ghHeaders(false), cache: 'no-store' })
+        return fetchT(apiUrl('/git/blobs/' + e.sha), { headers: ghHeaders(false), cache: 'no-store' })
           .then(function (r2) {
             if (!r2.ok) throw new Error('HTTP ' + r2.status);
             return r2.json();
@@ -1010,11 +1024,11 @@
   // 任意两条能通就合并，避免手机网络对某个域名不通时整条链路失败
   function fetchCloudAny() {
     var t1 = fetchCloudBlob().then(function (x) { return { d: x.data, sha: x.sha }; });
-    var t2 = fetch('https://raw.githubusercontent.com/' + SYNC.owner + '/' + SYNC.repo + '/' +
+    var t2 = fetchT('https://raw.githubusercontent.com/' + SYNC.owner + '/' + SYNC.repo + '/' +
                    SYNC.branch + '/' + SYNC.path + '?t=' + Date.now(), { cache: 'no-store' })
       .then(function (r) { if (!r.ok) throw new Error('raw ' + r.status); return r.json(); })
       .then(function (d) { return { d: d, sha: null }; });
-    var t3 = fetch('sync.json?ts=' + Date.now(), { cache: 'no-store' })
+    var t3 = fetchT('sync.json?ts=' + Date.now(), { cache: 'no-store' }, 6000)
       .then(function (r) { if (!r.ok) throw new Error('local ' + r.status); return r.json(); })
       .then(function (d) { return { d: d, sha: null }; });
 
