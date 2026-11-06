@@ -864,10 +864,23 @@
   }
 
   // 两份学习记录取并集（规则：批注去重拼接 / 收藏并集 / 错题取大 / 练习逐项取大）
+  // 练习断点：只有"同一次顺序练习"才比较进度，否则保留本机的，避免被别的设备拽走
+  function mergeLast(la, lb) {
+    var a = (la && la.list && la.list.length) ? la : null;
+    var b = (lb && lb.list && lb.list.length) ? lb : null;
+    if (!a) return b;
+    if (!b) return a;
+    var same = a.mode === 'seq' && b.mode === 'seq' && a.bank === b.bank &&
+               a.type === b.type && a.list.length === b.list.length;
+    if (!same) return a;
+    return (b.idx || 0) > (a.idx || 0) ? b : a;
+  }
+
   function mergeStores(a, b) {
     var out = {
       rec: a.rec || {}, fav: a.fav || {}, wrong: a.wrong || {},
-      exams: a.exams || {}, notes: a.notes || {}
+      exams: a.exams || {}, notes: a.notes || {},
+      last: mergeLast(a.last, b.last)
     };
     Object.keys(b.notes || {}).forEach(function (id) {
       if (!QMAP[id]) return;
@@ -909,6 +922,7 @@
     store.wrong = merged.wrong;
     store.rec = merged.rec;
     store.exams = merged.exams;
+    if (merged.last) store.last = merged.last;
     saveStore();
     renderHome();
   }
@@ -1126,7 +1140,7 @@
     var out = {
       app: 'anb-exam', v: 1, exported: new Date().toISOString(),
       notes: merged.notes || {}, fav: merged.fav || {}, wrong: merged.wrong || {},
-      rec: merged.rec || {}, exams: merged.exams || {}
+      rec: merged.rec || {}, exams: merged.exams || {}, last: merged.last || null
     };
     var body = {
       message: 'sync ' + new Date().toISOString().slice(0, 19).replace('T', ' '),
