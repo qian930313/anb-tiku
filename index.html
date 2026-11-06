@@ -12,7 +12,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="安B刷题">
-<link rel="stylesheet" href="assets/style.css?v=20261106f">
+<link rel="stylesheet" href="assets/style.css?v=20261106g">
 </head>
 <body>
 
@@ -92,6 +92,13 @@
     </div>
 
     <h2 class="section-title">模拟考试</h2>
+    <button class="exam-card exam-real" id="btn-real-exam">
+      <span class="real-flag">全真</span>
+      <b>真实考场</b>
+      <small id="real-exam-sub">90 题 · 90 分钟 · 60 分及格</small>
+      <em id="real-exam-em">按真实卷面分值判分 · 多选题少选按比例得分 · 到点自动交卷</em>
+    </button>
+    <div class="scope-hint">下面两个模考的题库范围</div>
     <div class="chip-row scope-row" id="exam-scope">
       <button class="chip chip-on" data-scope="ab">B类能力考核</button>
       <button class="chip" data-scope="c">三类题库（理论）</button>
@@ -203,6 +210,7 @@
     <div class="q-tags">
       <span class="tag tag-type" id="e-type">单选题</span>
       <span class="tag" id="e-no">第 1 题</span>
+      <button class="mark-btn" id="e-mark" hidden>⚑ 标记</button>
     </div>
     <div class="q-stem" id="e-stem"></div>
     <figure class="q-figure" id="e-figure">
@@ -235,6 +243,7 @@
         <div class="score-detail" id="score-detail"></div>
       </div>
     </div>
+    <div class="score-parts" id="score-parts" hidden></div>
     <div class="result-actions">
       <button class="btn btn-primary btn-block" id="btn-review">查看错题解析</button>
       <button class="btn btn-ghost btn-block" id="btn-again">再考一次</button>
@@ -269,8 +278,9 @@
       <span><i class="dot"></i>未答</span>
       <span><i class="dot dot-cur"></i>当前</span>
       <span><i class="dot dot-note"></i>有批注</span>
+      <span id="legend-mark" hidden><i class="dot dot-mark"></i>已标记</span>
     </div>
-    <div class="sheet-grid" id="sheet-grid"></div>
+    <div class="sheet-body" id="sheet-grid"></div>
     <button class="btn btn-primary btn-block" id="btn-handin">交卷</button>
   </div>
 </div>
@@ -317,6 +327,24 @@
 </div>
 
 <!-- 云同步令牌设置 -->
+<!-- 真实考场：卷面选择 -->
+<div class="note-mask" id="paper-modal" hidden>
+  <div class="note-dialog paper-dialog">
+    <div class="note-head">
+      <b>选择考试卷面</b>
+      <button class="icon-btn" id="paper-close">✕</button>
+    </div>
+    <div class="paper-hint">
+      各省 B 证卷面规则不同，按你报考的地区选。判分完全照真实规则：多选题错选不得分、少选按比例给分，到点自动交卷。
+    </div>
+    <div class="paper-list" id="paper-list"></div>
+    <div class="note-actions">
+      <button class="btn btn-ghost" id="paper-cancel">取消</button>
+      <button class="btn btn-primary" id="paper-start">进入考场</button>
+    </div>
+  </div>
+</div>
+
 <div class="note-mask" id="token-modal" hidden>
   <div class="note-dialog">
     <div class="note-head">
@@ -344,7 +372,7 @@
   <img id="lightbox-img" alt="">
 </div>
 
-<script src="data/questions.js?v=20261106f"></script>
-<script src="assets/app.js?v=20261106f"></script>
+<script src="data/questions.js?v=20261106g"></script>
+<script src="assets/app.js?v=20261106g"></script>
 </body>
 </html>

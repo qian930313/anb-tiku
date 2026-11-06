@@ -162,6 +162,7 @@
     } else {
       $('continue-sub').textContent = '暂无记录';
     }
+    renderRealCard();
   }
   function stat(v, label, cls) {
     return '<div class="stat ' + cls + '"><b>' + v + '</b><small>' + label + '</small></div>';
@@ -434,6 +435,239 @@
   }
 
   /* ---------------- 考试 ---------------- */
+  /* 真实考场：按各地区真实卷面出卷、按分值判分
+     题库现实：a/b 两库 868 题全是图片题（多选只有这里有 70 道），c 库 3817 题是文字题且无多选。
+     所以「文字多选」无法完全还原，卷面里已注明。 */
+  var PAPERS = [
+    {
+      id: 'std', name: '通用标准卷', min: 90, pass: 60,
+      parts: [
+        { t: 'judge',  n: 30, s: 1, pool: 'all', label: '判断题' },
+        { t: 'single', n: 50, s: 1, pool: 'all', label: '单选题' },
+        { t: 'multi',  n: 10, s: 2, pool: 'all', label: '多选题' }
+      ]
+    },
+    {
+      id: 'sc', name: '四川卷', min: 120, pass: 60,
+      parts: [
+        { t: 'single', n: 60, s: 1,   pool: 'txt', label: '单选题' },
+        { t: 'multi',  n: 10, s: 1.5, pool: 'all', label: '多选题' },
+        { t: 'judge',  n: 50, s: 0.5, pool: 'txt', label: '判断题' }
+      ]
+    },
+    {
+      id: 'hb', name: '湖北卷', min: 100, pass: 70,
+      parts: [
+        { t: 'single', n: 40, s: 1, pool: 'txt', label: '单选（文字题）' },
+        { t: 'multi',  n: 15, s: 2, pool: 'img', label: '多选题（一）' },
+        { t: 'single', n: 10, s: 1, pool: 'img', label: '单选（图片题）' },
+        { t: 'multi',  n: 10, s: 2, pool: 'img', label: '多选题（二）' }
+      ]
+    }
+  ];
+  var LIVE_KEY = 'anb_live_exam';
+  var PAPER_KEY = 'anb_paper';
+  var paperSel = 'std';
+
+  function paperById(id) {
+    for (var i = 0; i < PAPERS.length; i++) if (PAPERS[i].id === id) return PAPERS[i];
+    return PAPERS[0];
+  }
+  function paperPool(key) {
+    if (key === 'img') return QS.filter(function (q) { return q.b === 'a' || q.b === 'b'; });
+    if (key === 'txt') return QS.filter(function (q) { return q.b === 'c'; });
+    return QS.filter(function (q) { return q.b !== 'cs'; });
+  }
+  function paperTotal(p) {
+    var sum = 0;
+    p.parts.forEach(function (x) { sum += x.n * x.s; });
+    return sum;
+  }
+  function paperQty(p) {
+    var sum = 0;
+    p.parts.forEach(function (x) { sum += x.n; });
+    return sum;
+  }
+  function round1(x) { return Math.round(x * 10) / 10; }
+  function fmtPts(x) { return String(round1(x)); }
+
+  // 单题得分：多选错选 0 分，少选按选中比例给分（真实考场规则）
+  function ansScore(q, a, full) {
+    if (!a) return 0;
+    if (q.t === 'multi') {
+      var cur = a.split(''), key = q.a.split(''), allIn = true;
+      cur.forEach(function (c) { if (key.indexOf(c) < 0) allIn = false; });
+      if (!allIn) return 0;
+      if (cur.length === key.length) return full;
+      return round1(full * cur.length / key.length);
+    }
+    return sortLetters(a) === sortLetters(q.a) ? full : 0;
+  }
+
+  function gradeReal(ex) {
+    var got = 0, right = 0, blank = 0, wrongN = 0;
+    var parts = ex.groups.map(function (g) {
+      return { label: g.label, got: 0, total: 0, right: 0, n: 0 };
+    });
+    ex.list.forEach(function (id, i) {
+      var q = QMAP[id];
+      if (!q) return;
+      var full = ex.pts[id] || 0;
+      var pi = ex.groupOf[i] || 0;
+      parts[pi].total += full;
+      parts[pi].n++;
+      var a = ex.ans[id];
+      if (!a) { blank++; return; }
+      var sc = ansScore(q, a, full);
+      got += sc;
+      parts[pi].got += sc;
+      if (sc >= full - 0.001) { right++; parts[pi].right++; } else { wrongN++; }
+    });
+    return { got: round1(got), total: ex.total, right: right, wrong: wrongN, blank: blank, parts: parts };
+  }
+
+  function startRealExam(paperId) {
+    var p = paperById(paperId);
+    var list = [], pts = {}, groupOf = [], groups = [];
+    for (var i = 0; i < p.parts.length; i++) {
+      var part = p.parts[i];
+      var pool = shuffle(paperPool(part.pool).filter(function (q) { return q.t === part.t; }));
+      if (pool.length < part.n) {
+        toast('题库不足：' + part.label + '需要 ' + part.n + ' 题，现有 ' + pool.length + ' 题');
+        return;
+      }
+      var gi = groups.length;
+      groups.push({
+        label: part.label + ' · ' + part.n + ' 题 × ' + part.s + ' 分',
+        from: list.length, n: part.n
+      });
+      pool.slice(0, part.n).forEach(function (q) {
+        list.push(q.id);
+        pts[q.id] = part.s;
+        groupOf.push(gi);
+      });
+    }
+    var now = Date.now();
+    exam = {
+      real: true, paperId: p.id, name: p.name,
+      list: list, pts: pts, groupOf: groupOf, groups: groups,
+      ans: {}, idx: 0, marks: {},
+      endAt: now + p.min * 60000, min: p.min, pass: p.pass,
+      total: paperTotal(p), startedAt: now, submitted: false
+    };
+    try { localStorage.setItem(PAPER_KEY, p.id); } catch (e) {}
+    closePaperModal();
+    saveLiveExam();
+    show('exam');
+    renderExam();
+    startTimer();
+  }
+
+  function loadLiveExam() {
+    var raw = null;
+    try { raw = localStorage.getItem(LIVE_KEY); } catch (e) { return null; }
+    if (!raw) return null;
+    var d = null;
+    try { d = JSON.parse(raw); } catch (e) { d = null; }
+    if (!d || !d.real || !d.list || !d.list.length) return null;
+    if (!d.endAt || d.endAt <= Date.now()) { clearLiveExam(); return null; }
+    if (!d.pts || !d.groupOf || !d.groups) { clearLiveExam(); return null; }
+    for (var i = 0; i < d.list.length; i++) {
+      if (!QMAP[d.list[i]]) { clearLiveExam(); return null; }
+    }
+    d.submitted = false;
+    return d;
+  }
+  function saveLiveExam() {
+    if (!exam || !exam.real || exam.submitted) return;
+    try {
+      localStorage.setItem(LIVE_KEY, JSON.stringify({
+        real: true, paperId: exam.paperId, name: exam.name,
+        list: exam.list, pts: exam.pts, groupOf: exam.groupOf, groups: exam.groups,
+        ans: exam.ans, idx: exam.idx, marks: exam.marks,
+        endAt: exam.endAt, min: exam.min, pass: exam.pass,
+        total: exam.total, startedAt: exam.startedAt
+      }));
+    } catch (e) {}
+  }
+  function clearLiveExam() {
+    try { localStorage.removeItem(LIVE_KEY); } catch (e) {}
+  }
+  function resumeRealExam() {
+    var lv = loadLiveExam();
+    if (!lv) { openPaperModal(); return; }
+    exam = lv;
+    show('exam');
+    renderExam();
+    startTimer();
+  }
+  function liveLeftMin(lv) {
+    return Math.max(1, Math.ceil((lv.endAt - Date.now()) / 60000));
+  }
+
+  function renderRealCard() {
+    var btn = $('btn-real-exam'), sub = $('real-exam-sub'), em = $('real-exam-em');
+    if (!btn || !sub || !em) return;
+    var lv = loadLiveExam();
+    var p = paperById(paperSel);
+    if (lv) {
+      btn.classList.add('live');
+      sub.textContent = '继续考试 · 剩 ' + liveLeftMin(lv) + ' 分钟';
+      em.textContent = lv.name + ' · 已答 ' + Object.keys(lv.ans || {}).length + ' / ' + lv.list.length + ' 题';
+    } else {
+      btn.classList.remove('live');
+      sub.textContent = paperQty(p) + ' 题 · ' + p.min + ' 分钟 · ' + p.pass + ' 分及格';
+      em.textContent = '按真实卷面分值判分 · 多选题少选按比例得分 · 到点自动交卷';
+    }
+  }
+
+  function openPaperModal() {
+    var saved = null;
+    try { saved = localStorage.getItem(PAPER_KEY); } catch (e) {}
+    if (saved && paperById(saved).id === saved) paperSel = saved;
+    renderPaperList();
+    $('paper-modal').hidden = false;
+  }
+  function closePaperModal() { $('paper-modal').hidden = true; }
+
+  function renderPaperList() {
+    var box = $('paper-list');
+    if (!box) return;
+    box.innerHTML = PAPERS.map(function (p) {
+      var rows = p.parts.map(function (x) {
+        return '<span class="pi-tag">' + x.label + ' ' + x.n + '×' + x.s + '分</span>';
+      }).join('');
+      var note = p.id === 'hb'
+        ? '<div class="pi-note">题库里的多选题都带图片，本卷两段多选按图片题出（真实卷面为文字多选 + 图片多选）</div>'
+        : '';
+      return '<button class="paper-item' + (p.id === paperSel ? ' sel' : '') + '" data-paper="' + p.id + '">' +
+        '<b>' + p.name + '</b>' +
+        '<small>' + paperQty(p) + ' 题 · 满分 ' + paperTotal(p) + ' · ' + p.min + ' 分钟 · ' + p.pass + ' 分及格</small>' +
+        '<div class="pi-rows">' + rows + '</div>' + note + '</button>';
+    }).join('');
+    Array.prototype.forEach.call(box.querySelectorAll('.paper-item'), function (el) {
+      el.onclick = function () {
+        paperSel = el.getAttribute('data-paper');
+        renderPaperList();
+      };
+    });
+  }
+
+  function renderScoreParts(parts) {
+    var box = $('score-parts');
+    if (!box) return;
+    box.hidden = false;
+    box.innerHTML = '<div class="sp-title">分题型得分</div>' + parts.map(function (p) {
+      var pct = p.total ? Math.round(p.got / p.total * 100) : 0;
+      var name = p.label.split(' · ')[0];
+      return '<div class="sp-row">' +
+        '<span class="sp-name">' + esc(name) + '</span>' +
+        '<span class="sp-bar"><i style="width:' + pct + '%"></i></span>' +
+        '<span class="sp-val">' + fmtPts(p.got) + '/' + fmtPts(p.total) + ' · 对 ' + p.right + '/' + p.n + '</span>' +
+        '</div>';
+    }).join('');
+  }
+
   var PRESET = {
     quick: { judge: 10, single: 15, multi: 5, min: 25, name: '快速模考' },
     full: { judge: 30, single: 50, multi: 20, min: 60, name: '标准模考' }
@@ -489,7 +723,18 @@
     $('exam-title').textContent = exam.name;
     $('exam-progress').style.width = Math.round((exam.idx + 1) / total * 100) + '%';
     $('e-type').textContent = typeName(q.t) + (q.t === 'multi' ? ' · 可多选' : '');
-    $('e-no').textContent = '第 ' + (exam.idx + 1) + ' / ' + total + ' 题';
+    $('e-no').textContent = '第 ' + (exam.idx + 1) + ' / ' + total + ' 题' +
+      (exam.real ? ' · ' + fmtPts(exam.pts[q.id]) + ' 分' : '');
+    var mk = $('e-mark');
+    if (mk) {
+      if (exam.real) {
+        mk.hidden = false;
+        mk.classList.toggle('on', !!exam.marks[q.id]);
+        mk.textContent = exam.marks[q.id] ? '★ 已标记' : '☆ 标记';
+      } else {
+        mk.hidden = true;
+      }
+    }
     $('e-stem').textContent = q.q;
 
     var fig = $('e-figure'), im = $('e-img');
@@ -536,6 +781,7 @@
 
     $('e-prev').disabled = exam.idx === 0;
     $('e-next').textContent = exam.idx === total - 1 ? '交卷' : '下一题';
+    saveLiveExam();
     preload(exam.list[exam.idx + 1]);
   }
 
@@ -550,21 +796,39 @@
 
   function openSheet() {
     var g = $('sheet-grid');
-    g.innerHTML = '';
-    exam.list.forEach(function (id, i) {
-      var c = document.createElement('button');
-      c.className = 'sheet-cell';
-      c.textContent = i + 1;
-      if (getNote(id)) c.classList.add('has-note');
-      if (exam.ans[id]) c.classList.add('done');
-      if (i === exam.idx) c.classList.add('cur');
-      c.onclick = function () {
-        exam.idx = i; closeSheet(); renderExam(); window.scrollTo(0, 0);
+    var html = '';
+    function cellOf(id, i) {
+      var cls = 'sheet-cell';
+      if (getNote(id)) cls += ' has-note';
+      if (exam.ans[id]) cls += ' done';
+      if (i === exam.idx) cls += ' cur';
+      if (exam.real && exam.marks[id]) cls += ' marked';
+      return '<button class="' + cls + '" data-i="' + i + '">' + (i + 1) + '</button>';
+    }
+    if (exam.real && exam.groups) {
+      exam.groups.forEach(function (grp) {
+        html += '<div class="sheet-sec">' + esc(grp.label) + '</div><div class="sheet-grid">';
+        for (var i = grp.from; i < grp.from + grp.n; i++) html += cellOf(exam.list[i], i);
+        html += '</div>';
+      });
+    } else {
+      html = '<div class="sheet-grid">';
+      exam.list.forEach(function (id, i) { html += cellOf(id, i); });
+      html += '</div>';
+    }
+    g.innerHTML = html;
+    Array.prototype.forEach.call(g.querySelectorAll('.sheet-cell'), function (el) {
+      el.onclick = function () {
+        exam.idx = parseInt(el.getAttribute('data-i'), 10);
+        closeSheet();
+        renderExam();
+        window.scrollTo(0, 0);
       };
-      g.appendChild(c);
     });
     var answeredN = exam.list.filter(function (id) { return exam.ans[id]; }).length;
     $('sheet-count').textContent = '已答 ' + answeredN + ' / ' + exam.list.length;
+    var lm = $('legend-mark');
+    if (lm) lm.hidden = !exam.real;
     $('drawer-mask').hidden = false;
   }
   function closeSheet() { $('drawer-mask').hidden = true; }
@@ -573,38 +837,67 @@
     if (!exam || exam.submitted) return;
     var blank = exam.list.filter(function (id) { return !exam.ans[id]; }).length;
     if (!auto && blank > 0) {
-      if (!confirm('还有 ' + blank + ' 题未作答，确定交卷吗？')) return;
+      var tip = exam.real
+        ? '还有 ' + blank + ' 题未作答（未答按 0 分计），确定交卷吗？'
+        : '还有 ' + blank + ' 题未作答，确定交卷吗？';
+      if (!confirm(tip)) return;
     }
     exam.submitted = true;
     stopTimer();
     closeSheet();
+    clearLiveExam();
 
+    var res = exam.real ? gradeReal(exam) : null;
+
+    // 每题对错照旧计入练习记录与错题本（多选漏选算错，方便之后复练）
     var right = 0, wrong = 0;
     exam.list.forEach(function (id) {
       var q = QMAP[id], a = exam.ans[id];
       var r = rec(id);
       r.ts = Date.now();
-      if (a && sortLetters(a) === sortLetters(q.a)) {
-        right++; r.c++; r.s++;
+      var ok;
+      if (exam.real) {
+        var full = exam.pts[id] || 1;
+        ok = ansScore(q, a, full) >= full - 0.001;
       } else {
-        wrong++; r.w++; r.s = 0;
-        store.wrong[id] = Date.now();
+        ok = !!a && sortLetters(a) === sortLetters(q.a);
       }
+      if (ok) { right++; r.c++; r.s++; }
+      else { wrong++; r.w++; r.s = 0; store.wrong[id] = Date.now(); }
     });
+
     var total = exam.list.length;
-    var score = Math.round(right / total * 100);
-    store.exams.push({ ts: Date.now(), name: exam.name, score: score, right: right, total: total, min: exam.min });
+    var score = exam.real ? res.got : Math.round(right / total * 100);
+    var passLine = exam.real ? exam.pass : 60;
+    var pass = score >= passLine;
+    store.exams.push({
+      ts: Date.now(), name: exam.name, score: score, right: right, total: total,
+      min: exam.min, pass: passLine, paper: exam.paperId || null
+    });
     if (store.exams.length > 30) store.exams = store.exams.slice(-30);
     saveStore();
 
     $('result-sub').textContent = exam.name + ' · ' + new Date().toLocaleString('zh-CN', { hour12: false });
-    $('score-num').textContent = score;
-    var pass = score >= 60;
-    $('score-verdict').textContent = pass ? '合格' : '不合格';
+    $('score-num').textContent = exam.real ? fmtPts(score) : score;
+    $('score-verdict').textContent = exam.real
+      ? (pass ? '合格 · 达到 ' + passLine + ' 分' : '不合格 · 差 ' + fmtPts(passLine - score) + ' 分')
+      : (pass ? '合格' : '不合格');
     $('score-verdict').className = 'verdict-line ' + (pass ? 'ok' : 'bad');
-    $('score-detail').innerHTML =
-      '答对 ' + right + ' 题 · 答错 ' + (total - right - blank) + ' 题 · 未答 ' + blank + ' 题<br>' +
-      '共 ' + total + ' 题 · 限时 ' + exam.min + ' 分钟 · 及格线 60 分';
+
+    if (exam.real) {
+      var usedSec = Math.max(1, Math.round((Math.min(Date.now(), exam.endAt || Date.now()) - exam.startedAt) / 1000));
+      var um = Math.floor(usedSec / 60), us = usedSec % 60;
+      $('score-detail').innerHTML =
+        '答对 ' + res.right + ' · 答错 ' + res.wrong + ' · 未答 ' + res.blank + ' 题<br>' +
+        '满分 ' + fmtPts(res.total) + ' · 及格 ' + passLine + ' · 限时 ' + exam.min + ' 分钟 · 用时 ' +
+        (um ? um + ' 分 ' : '') + us + ' 秒';
+      renderScoreParts(res.parts);
+    } else {
+      $('score-parts').hidden = true;
+      $('score-detail').innerHTML =
+        '答对 ' + right + ' 题 · 答错 ' + (total - right - blank) + ' 题 · 未答 ' + blank + ' 题<br>' +
+        '共 ' + total + ' 题 · 限时 ' + exam.min + ' 分钟 · 及格线 60 分';
+    }
     $('score-ring').style.background =
       'conic-gradient(' + (pass ? '#12805c' : '#d92d20') + ' ' + (score * 3.6) + 'deg, #eef1f6 0deg)';
 
@@ -618,7 +911,10 @@
         mode: 'review', title: '本次错题精练', listOverride: wrongIds
       });
     };
-    $('btn-again').onclick = function () { startExam(exam.kind); };
+    $('btn-again').onclick = function () {
+      if (exam.real) startRealExam(exam.paperId);
+      else startExam(exam.kind);
+    };
     $('btn-home').onclick = goHome;
     show('result');
   }
@@ -1447,7 +1743,38 @@
     };
 
     $('exam-exit').onclick = function () {
+      if (!exam) { goHome(); return; }
+      if (exam.real) {
+        if (!confirm('退出后本场考试仍在计时，可以回来接着做。\n确定退出吗？')) return;
+        saveLiveExam();
+        stopTimer();
+        goHome();
+        return;
+      }
       if (confirm('退出将放弃本次考试，确定吗？')) { stopTimer(); goHome(); }
+    };
+    $('btn-real-exam').onclick = function () {
+      var lv = loadLiveExam();
+      if (lv) {
+        var ok = confirm('有一场未交卷的考试：' + lv.name + '（剩 ' + liveLeftMin(lv) + ' 分钟，已答 ' +
+          Object.keys(lv.ans || {}).length + ' / ' + lv.list.length + ' 题）。\n\n' +
+          '点「确定」继续这场；点「取消」另开一场新考试（原来的作废）');
+        if (ok) { resumeRealExam(); return; }
+      }
+      openPaperModal();
+    };
+    $('paper-close').onclick = closePaperModal;
+    $('paper-cancel').onclick = closePaperModal;
+    $('paper-modal').onclick = function (e) {
+      if (e.target === $('paper-modal')) closePaperModal();
+    };
+    $('paper-start').onclick = function () { startRealExam(paperSel); };
+    $('e-mark').onclick = function () {
+      if (!exam || !exam.real) return;
+      var id = exam.list[exam.idx];
+      if (exam.marks[id]) delete exam.marks[id];
+      else exam.marks[id] = 1;
+      renderExam();
     };
     $('e-prev').onclick = function () { examNav(-1); };
     $('e-next').onclick = function () {
@@ -1526,6 +1853,10 @@
   }
 
   /* ---------------- 启动 ---------------- */
+  try {
+    var savedPaper = localStorage.getItem(PAPER_KEY);
+    if (savedPaper && paperById(savedPaper).id === savedPaper) paperSel = savedPaper;
+  } catch (e) {}
   renderHome();
   bind();
   show('home');
