@@ -1031,29 +1031,46 @@
   // 三条读取通道同时试：api（最新）→ raw 域名（CDN，5 分钟缓存）→ 站点内快照
   // 任意两条能通就合并，避免手机网络对某个域名不通时整条链路失败
   function fetchCloudAny() {
-    var t1 = fetchCloudBlob().then(function (x) { return { d: x.data, sha: x.sha }; });
-    var t2 = fetchT('https://raw.githubusercontent.com/' + SYNC.owner + '/' + SYNC.repo + '/' +
-                   SYNC.branch + '/' + SYNC.path + '?t=' + Date.now(), { cache: 'no-store' })
+    var done = { p1: null, p2: null, p3: null };
+    function guard(key, p) {
+      return p.then(function (v) { done[key] = v; return v; },
+                    function () { done[key] = false; return null; });
+    }
+    var t1 = guard('p1', fetchCloudBlob().then(function (x) { return { d: x.data, sha: x.sha }; }));
+    var t2 = guard('p2', fetchT('https://raw.githubusercontent.com/' + SYNC.owner + '/' + SYNC.repo + '/' +
+                   SYNC.branch + '/' + SYNC.path + '?t=' + Date.now(), { cache: 'no-store' }, 6000)
       .then(function (r) { if (!r.ok) throw new Error('raw ' + r.status); return r.json(); })
-      .then(function (d) { return { d: d, sha: null }; });
-    var t3 = fetchT('sync.json?ts=' + Date.now(), { cache: 'no-store' }, 6000)
+      .then(function (d) { return { d: d, sha: null }; }));
+    var t3 = guard('p3', fetchT('sync.json?ts=' + Date.now(), { cache: 'no-store' }, 6000)
       .then(function (r) { if (!r.ok) throw new Error('local ' + r.status); return r.json(); })
-      .then(function (d) { return { d: d, sha: null }; });
+      .then(function (d) { return { d: d, sha: null }; }));
 
-    return Promise.all([t1.catch(function () { return null; }),
-                        t2.catch(function () { return null; }),
-                        t3.catch(function () { return null; })])
-      .then(function (list) {
-        var got = list.filter(function (x) { return x && x.d && x.d.rec; });
-        if (!got.length) throw new Error('no-cloud');
-        var merged = got[0].d;
-        for (var i = 1; i < got.length; i++) merged = mergeStores(merged, got[i].d);
-        var sha = null;
-        for (var j = 0; j < list.length; j++) {
-          if (list[j] && list[j].sha) { sha = list[j].sha; break; }
-        }
-        return { data: merged, sha: sha };
-      });
+    function collect() {
+      var list = [done.p1, done.p2, done.p3];
+      var got = list.filter(function (x) { return x && x.d && x.d.rec; });
+      if (!got.length) return null;
+      var merged = got[0].d;
+      for (var i = 1; i < got.length; i++) merged = mergeStores(merged, got[i].d);
+      var sha = null;
+      for (var j = 0; j < list.length; j++) {
+        if (list[j] && list[j].sha) { sha = list[j].sha; break; }
+      }
+      return { data: merged, sha: sha };
+    }
+
+    // 主通道（api）到手就够用：再给备选通道 1.2 秒凑齐，凑不齐也不等
+    // （raw.githubusercontent.com 在某些网络下会一直挂着，不能让它拖住整次同步）
+    return t1.then(function () {
+      if (done.p1 && done.p1.d) {
+        return new Promise(function (res) { setTimeout(res, 1200); })
+          .then(function () { return collect(); });
+      }
+      // 主通道失败：等备选通道（各自有超时）
+      return Promise.all([t2, t3]).then(function () { return collect(); });
+    }).then(function (out) {
+      if (!out) throw new Error('no-cloud');
+      return out;
+    });
   }
 
   function loadSyncState() {
