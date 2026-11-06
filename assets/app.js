@@ -922,6 +922,9 @@
   }
 
   /* ---------------- 云端仓库同步（sync-data 分支） ---------------- */
+  var SYNC_STATE_KEY = 'anb_sync_state';
+  var syncBusy = false;
+
   function ghToken() {
     try { return localStorage.getItem(TOKEN_KEY) || ''; } catch (e) { return ''; }
   }
@@ -944,6 +947,32 @@
   function utf8ToB64(s) {
     return btoa(unescape(encodeURIComponent(s)));
   }
+
+  function countOf(d) {
+    d = d || {};
+    var n = function (o) { return o ? Object.keys(o).length : 0; };
+    return { notes: n(d.notes), fav: n(d.fav), wrong: n(d.wrong), rec: n(d.rec) };
+  }
+  // 记录"分量"指纹：数量 + 练习计数加权求和，用来判断两端是否一致
+  function sigOf(d) {
+    d = d || {};
+    var sum = 0;
+    Object.keys(d.rec || {}).forEach(function (k) {
+      var r = d.rec[k] || {};
+      sum += (r.c || 0) + (r.w || 0) * 7 + (r.s || 0) * 13;
+    });
+    return [Object.keys(d.notes || {}).length, Object.keys(d.fav || {}).length,
+            Object.keys(d.wrong || {}).length, sum].join('|');
+  }
+  function agoText(ts) {
+    if (!ts) return '';
+    var sec = Math.floor((Date.now() - ts) / 1000);
+    if (sec < 60) return '刚刚';
+    if (sec < 3600) return Math.floor(sec / 60) + ' 分钟前';
+    if (sec < 86400) return Math.floor(sec / 3600) + ' 小时前';
+    return Math.floor(sec / 86400) + ' 天前';
+  }
+
   // 读云端：走不可变的 git 数据 API（ref → tree → blob），避开 contents API 的 CDN 缓存
   function fetchCloudBlob() {
     return fetch(apiUrl('/git/trees/' + SYNC.branch), { headers: ghHeaders(false), cache: 'no-store' })
@@ -962,15 +991,183 @@
           .then(function (b) { return { data: JSON.parse(b64ToUtf8(b.content)), sha: e.sha }; });
       });
   }
-  function fetchCloudFile(tries) {
-    tries = tries || 0;
-    return fetchCloudBlob().catch(function (e) {
-      if (tries < 2) {
-        return new Promise(function (res) { setTimeout(res, 1500 * (tries + 1)); })
-          .then(function () { return fetchCloudFile(tries + 1); });
+
+  // 三条读取通道同时试：api（最新）→ raw 域名（CDN，5 分钟缓存）→ 站点内快照
+  // 任意两条能通就合并，避免手机网络对某个域名不通时整条链路失败
+  function fetchCloudAny() {
+    var t1 = fetchCloudBlob().then(function (x) { return { d: x.data, sha: x.sha }; });
+    var t2 = fetch('https://raw.githubusercontent.com/' + SYNC.owner + '/' + SYNC.repo + '/' +
+                   SYNC.branch + '/' + SYNC.path + '?t=' + Date.now(), { cache: 'no-store' })
+      .then(function (r) { if (!r.ok) throw new Error('raw ' + r.status); return r.json(); })
+      .then(function (d) { return { d: d, sha: null }; });
+    var t3 = fetch('sync.json?ts=' + Date.now(), { cache: 'no-store' })
+      .then(function (r) { if (!r.ok) throw new Error('local ' + r.status); return r.json(); })
+      .then(function (d) { return { d: d, sha: null }; });
+
+    return Promise.all([t1.catch(function () { return null; }),
+                        t2.catch(function () { return null; }),
+                        t3.catch(function () { return null; })])
+      .then(function (list) {
+        var got = list.filter(function (x) { return x && x.d && x.d.rec; });
+        if (!got.length) throw new Error('no-cloud');
+        var merged = got[0].d;
+        for (var i = 1; i < got.length; i++) merged = mergeStores(merged, got[i].d);
+        var sha = null;
+        for (var j = 0; j < list.length; j++) {
+          if (list[j] && list[j].sha) { sha = list[j].sha; break; }
+        }
+        return { data: merged, sha: sha };
+      });
+  }
+
+  function loadSyncState() {
+    try { return JSON.parse(localStorage.getItem(SYNC_STATE_KEY)) || {}; } catch (e) { return {}; }
+  }
+  function saveSyncState(patch) {
+    var st = loadSyncState();
+    Object.keys(patch || {}).forEach(function (k) { st[k] = patch[k]; });
+    try { localStorage.setItem(SYNC_STATE_KEY, JSON.stringify(st)); } catch (e) {}
+    return st;
+  }
+
+  function renderSyncBar(info) {
+    var dot = $('sync-dot'), title = $('sync-title'), sub = $('sync-sub'), btn = $('btn-sync');
+    if (!dot || !title || !sub) return;
+    var loc = countOf(store);
+    var paired = !!ghToken();
+    if (btn) { btn.disabled = false; btn.textContent = paired ? '同步' : '配对'; }
+    var cls = 'sync-dot', t = '', s2 = '';
+
+    if (info && info.error) {
+      cls += ' bad';
+      t = '读不到云端记录';
+      s2 = '本机 ' + loc.wrong + ' 错题 · ' + loc.fav + ' 收藏' +
+           (info.error === 'no-cloud' ? '（云端还没有数据）' : '（网络或权限问题，点「同步」重试）');
+    } else if (info && info.cloud) {
+      var c = info.cloud;
+      cls += info.same ? ' on' : ' off';
+      t = info.same ? '本机与云端一致' : '已合并云端记录';
+      s2 = '本机 ' + loc.wrong + ' 错题 / ' + loc.fav + ' 收藏 · 云端 ' + c.wrong + ' / ' + c.fav +
+           (info.at ? ' · ' + agoText(info.at) + '同步' : '');
+      if (!paired) s2 += ' · 未配对：读的是缓存副本，且改动不上传';
+    } else {
+      t = '本机 ' + loc.wrong + ' 错题 · ' + loc.fav + ' 收藏';
+      s2 = paired ? '点「同步」与云端合并' : '未配对：只能读到缓存副本，点「配对」可实时同步';
+    }
+    dot.className = cls;
+    title.textContent = t;
+    sub.textContent = s2;
+  }
+
+  // 拉 + 合 + 推（有令牌时）一次完成
+  function syncNow(manual) {
+    if (syncBusy) return Promise.resolve(null);
+    if (!manual) {
+      // 自动同步节流：1 分钟内不重复请求，避免频繁切页打满接口
+      var prev = loadSyncState();
+      if (prev.lastSync && Date.now() - prev.lastSync < 60000) {
+        renderSyncBar(prev.lastResult || null);
+        return Promise.resolve(null);
       }
-      throw e;
+    }
+    syncBusy = true;
+    var btn = $('btn-sync');
+    if (btn) { btn.disabled = true; btn.textContent = '同步中…'; }
+    var before = sigOf(store);
+
+    return fetchCloudAny()
+      .then(function (res) {
+        var cloud = res.data || null;
+        var merged = cloud ? mergeStores(store, cloud) : store;
+        if (sigOf(merged) !== before) adoptMerged(merged);
+        var info = {
+          cloud: countOf(cloud), sha: res.sha || null, at: Date.now(),
+          same: cloud ? (sigOf(merged) === sigOf(cloud)) : false, pushed: false
+        };
+        if (!ghToken() || !cloud || info.same) return info;
+        return pushMerged(merged, res.sha, 0).then(function () {
+          info.pushed = true;
+          info.same = true;
+          info.cloud = countOf(store);   // 推送成功后云端内容 = 合并结果
+          return info;
+        });
+      })
+      .then(function (info) {
+        syncBusy = false;
+        saveSyncState({ lastSync: info.at, lastResult: info });
+        renderSyncBar(info);
+        // 未配对设备读到的是 GitHub 的共享缓存（60 秒），过期后再拉一次
+        if (!ghToken()) scheduleRepull(65000);
+        if (manual) {
+          if (info.pushed) {
+            toast('已同步：云端与本机都是 ' + countOf(store).wrong + ' 错题、' + countOf(store).fav + ' 收藏');
+          } else if (info.cloud && info.cloud.rec) {
+            toast('已合并云端：' + info.cloud.wrong + ' 错题、' + info.cloud.fav + ' 收藏、' + info.cloud.notes + ' 批注');
+          } else {
+            toast('云端还没有记录，先在本机做题');
+          }
+        }
+        return info;
+      })
+      .catch(function (e) {
+        syncBusy = false;
+        var info = { error: (e && e.message) || 'fail' };
+        renderSyncBar(info);
+        if (manual) {
+          toast('同步失败：' + (info.error === 'no-cloud' ? '云端还没有数据' : info.error));
+        }
+        return null;
+      });
+  }
+
+  // 写云端：PUT 一份完整合并结果；版本冲突（422）时重读再试
+  function pushMerged(merged, sha, attempt) {
+    attempt = attempt || 0;
+    var out = {
+      app: 'anb-exam', v: 1, exported: new Date().toISOString(),
+      notes: merged.notes || {}, fav: merged.fav || {}, wrong: merged.wrong || {},
+      rec: merged.rec || {}, exams: merged.exams || {}
+    };
+    var body = {
+      message: 'sync ' + new Date().toISOString().slice(0, 19).replace('T', ' '),
+      content: utf8ToB64(JSON.stringify(out)),
+      branch: SYNC.branch
+    };
+    if (sha) body.sha = sha;
+    return fetch(apiUrl('/contents/' + SYNC.path), {
+      method: 'PUT', headers: ghHeaders(true), body: JSON.stringify(body)
+    }).then(function (r) {
+      if (r.status === 422 && attempt < 2) {
+        return fetchCloudAny().then(function (res) {
+          return pushMerged(mergeStores(merged, res.data || {}), res.sha, attempt + 1);
+        });
+      }
+      if (!r.ok) {
+        throw new Error('HTTP ' + r.status +
+          (r.status === 401 || r.status === 403 ? '（令牌无效或无权限）' : ''));
+      }
+      return null;
     });
+  }
+
+  var repullTimer = null;
+  function scheduleRepull(ms) {
+    if (repullTimer) return;
+    repullTimer = setTimeout(function () {
+      repullTimer = null;
+      var st = loadSyncState();
+      if (st.lastSync && Date.now() - st.lastSync < ms - 5000) return;
+      syncNow(false);
+    }, ms);
+  }
+
+  function pullCloud() { syncNow(true); }
+  function pushCloud() {
+    if (!ghToken()) {
+      $('btn-token').click();
+      return toast('上传需要 GitHub 令牌，请先配对');
+    }
+    syncNow(true);
   }
   function ensureBranch() {
     return fetch(apiUrl('/git/ref/heads/' + SYNC.branch), { headers: ghHeaders(false) })
@@ -992,64 +1189,7 @@
           });
       });
   }
-  function pullCloud() {
-    var btn = $('btn-cloud');
-    btn.textContent = '正在拉取…';
-    fetchCloudFile()
-      .then(function (res) {
-        if (!res.data) throw new Error('no-file');
-        applyBackup(res.data);
-      })
-      .catch(function () {
-        // 云端 API 失败时退回站点内的静态副本
-        return fetch('sync.json?ts=' + Date.now(), { cache: 'no-store' })
-          .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
-          .then(applyBackup);
-      })
-      .catch(function () {
-        toast('拉取失败：云端还没有同步数据');
-      })
-      .then(function () { btn.textContent = '从云端拉取记录'; });
-  }
-  // 上传一次：读云端 → 并集 → 写回。云端版本有变化（422）时自动重取重试
-  function pushOnce(attempt) {
-    attempt = attempt || 0;
-    return ensureBranch()
-      .then(fetchCloudFile)
-      .then(function (res) {
-        var merged = mergeStores(store, res.data || {});
-        merged.app = 'anb-exam';
-        merged.v = 1;
-        merged.exported = new Date().toISOString();
-        // 云端可能有别的设备的新数据 → 合并结果同时落到本机
-        adoptMerged(merged);
-        var body = {
-          message: 'sync ' + new Date().toISOString().slice(0, 19).replace('T', ' '),
-          content: utf8ToB64(JSON.stringify(merged)),
-          branch: SYNC.branch
-        };
-        if (res.sha) body.sha = res.sha;
-        return fetch(apiUrl('/contents/' + SYNC.path), {
-          method: 'PUT', headers: ghHeaders(true), body: JSON.stringify(body)
-        }).then(function (r) {
-          if (r.status === 422 && attempt < 2) return pushOnce(attempt + 1);   // 版本冲突：重读重试
-          if (!r.ok) throw new Error('HTTP ' + r.status + '（令牌权限不足或已过期？）');
-          return null;
-        });
-      });
-  }
-  function pushCloud() {
-    if (!ghToken()) {
-      $('btn-token').click();
-      return toast('上传需要 GitHub 令牌，请先在弹窗里粘贴');
-    }
-    var btn = $('btn-push');
-    btn.textContent = '正在上传…';
-    pushOnce()
-      .then(function () { toast('已上传到云端（合并后共 ' + Object.keys(store.wrong).length + ' 条错题记录）'); })
-      .catch(function (e) { toast('上传失败：' + (e.message || e)); })
-      .then(function () { btn.textContent = '上传本机记录到云端'; });
-  }
+
   function openTokenModal() {
     var t = ghToken();
     $('token-input').value = t;
@@ -1207,6 +1347,17 @@
     };
     $('btn-cloud').onclick = pullCloud;
     $('btn-push').onclick = pushCloud;
+    $('btn-sync').onclick = function () {
+      if (!ghToken()) {
+        openTokenModal();
+        return toast('先用令牌配对，手机才能把记录上传到云端');
+      }
+      syncNow(true);
+    };
+    $('sync-bar').onclick = function (e) {
+      if (e.target && e.target.id === 'btn-sync') return;
+      syncNow(true);
+    };
     $('btn-token').onclick = openTokenModal;
     $('token-close').onclick = $('token-cancel').onclick = function () { $('token-modal').hidden = true; };
     $('token-save').onclick = function () {
@@ -1217,7 +1368,13 @@
         else localStorage.removeItem(TOKEN_KEY);
       } catch (e) { return toast('保存失败'); }
       $('token-modal').hidden = true;
-      toast(v ? '令牌已保存（仅存本机）' : '令牌已清除');
+      if (v) {
+        toast('令牌已保存，正在双向同步…');
+        syncNow(true);
+      } else {
+        renderSyncBar(null);
+        toast('令牌已清除');
+      }
     };
     $('token-clear').onclick = function () {
       try { localStorage.removeItem(TOKEN_KEY); } catch (e) {}
@@ -1312,4 +1469,12 @@
   renderHome();
   bind();
   show('home');
+  renderSyncBar(null);
+  // 打开页面就自动对一次云端（失败不打扰：状态条会显示原因）
+  setTimeout(function () { syncNow(false); }, 500);
+  window.addEventListener('online', function () { syncNow(false); });
+  // 回到前台时再对一次，手机上切回来就能看到电脑端新记录
+  document.addEventListener('visibilitychange', function () {
+    if (!document.hidden && !syncBusy) syncNow(false);
+  });
 })();

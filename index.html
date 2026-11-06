@@ -35,6 +35,15 @@
 
     <h2 class="section-title">选择题库</h2>
     <div class="section-hint">共 4685 题 · 对应三个题库文件夹</div>
+    <div class="sync-bar" id="sync-bar">
+      <span class="sync-dot" id="sync-dot" aria-hidden="true"></span>
+      <div class="sync-txt">
+        <b id="sync-title">正在读取云端记录…</b>
+        <small id="sync-sub">本机与云端自动合并，无需手动操作</small>
+      </div>
+      <button class="sync-btn" id="btn-sync">同步</button>
+    </div>
+
     <div class="bank-grid">
       <button class="bank-card bank-all" data-bank="all">
         <div class="bank-top"><span class="bank-name">全部题库</span><span class="bank-badge">4685</span></div>
