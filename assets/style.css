@@ -188,10 +188,15 @@ h1,h2,h3,p{margin:0}
   border-top:1px dashed var(--line);font-size:13px;
 }
 .sp-row:first-of-type{border-top:none}
-.sp-name{flex:0 0 88px;color:var(--ink)}
+.sp-name{flex:0 0 110px;color:var(--ink);font-size:12.5px;line-height:1.4}
 .sp-bar{flex:1;height:6px;border-radius:3px;background:#eef1f6;overflow:hidden}
 .sp-bar i{display:block;height:100%;background:var(--primary);border-radius:3px}
 .sp-val{flex:0 0 auto;color:var(--ink-2);font-variant-numeric:tabular-nums;font-size:12.5px}
+.sp-title-2{margin-top:14px}
+.sp-row.ok .sp-bar i{background:#12805c}
+.sp-row.ok .sp-val{color:#12805c;font-weight:600}
+.sp-row.bad .sp-bar i{background:#d92d20}
+.sp-row.bad .sp-val{color:#d92d20;font-weight:600}
 
 /* ---------- 题型 chips ---------- */
 .chip-row{display:flex;gap:8px;flex-wrap:wrap}

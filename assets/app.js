@@ -437,7 +437,9 @@
   /* ---------------- 考试 ---------------- */
   /* 真实考场：按各地区真实卷面出卷、按分值判分
      题库现实：a/b 两库 868 题全是图片题（多选只有这里有 70 道），c 库 3817 题是文字题且无多选。
-     所以「文字多选」无法完全还原，卷面里已注明。 */
+     所以「文字多选」无法完全还原，卷面里已注明。
+     陕西卷按省住建厅 2026 年 4 月新版题库通知组卷：知识 100 分（40 单选 + 10 多选 + 28 判断 + 3 案例）、
+     能力 50 分（25 单选 + 5 多选 + 15 判断），两科分卷、分别计分，两科同时合格才算通过。 */
   var PAPERS = [
     {
       id: 'std', name: '通用标准卷', min: 90, pass: 60,
@@ -463,11 +465,39 @@
         { t: 'single', n: 10, s: 1, pool: 'img', label: '单选（图片题）' },
         { t: 'multi',  n: 10, s: 2, pool: 'img', label: '多选题（二）' }
       ]
+    },
+    {
+      id: 'sn', name: '陕西卷', min: 135, pass: 60,
+      note: '陕西两科分卷、分别计分：安全生产知识 100 分（60 及格）、安全生产管理能力 50 分（30 及格），两科同时合格才算通过。案例分析按每组 4 问、每问 1 分计。',
+      subs: [
+        {
+          name: '安全生产知识', short: '知识', pass: 60, min: 90,
+          parts: [
+            { t: 'single', n: 40, s: 1, pool: 'all', label: '单选题' },
+            { t: 'multi',  n: 10, s: 2, pool: 'img', label: '多选题' },
+            { t: 'judge',  n: 28, s: 1, pool: 'all', label: '判断题' },
+            { t: 'case',   n: 3,  s: 1, per: 4, pool: 'case', label: '案例分析' }
+          ]
+        },
+        {
+          name: '安全生产管理能力', short: '能力', pass: 30, min: 45,
+          parts: [
+            { t: 'single', n: 25, s: 1, pool: 'all', label: '单选题' },
+            { t: 'multi',  n: 5,  s: 2, pool: 'img', label: '多选题' },
+            { t: 'judge',  n: 15, s: 1, pool: 'all', label: '判断题' }
+          ]
+        }
+      ]
     }
   ];
   var LIVE_KEY = 'anb_live_exam';
   var PAPER_KEY = 'anb_paper';
   var paperSel = 'std';
+  // 记住上次选的卷面：下次打开首页卡片直接显示该地区规则
+  try {
+    var _ps = localStorage.getItem(PAPER_KEY);
+    if (_ps) for (var _pi = 0; _pi < PAPERS.length; _pi++) if (PAPERS[_pi].id === _ps) paperSel = _ps;
+  } catch (e) {}
 
   function paperById(id) {
     for (var i = 0; i < PAPERS.length; i++) if (PAPERS[i].id === id) return PAPERS[i];
@@ -478,15 +508,56 @@
     if (key === 'txt') return QS.filter(function (q) { return q.b === 'c'; });
     return QS.filter(function (q) { return q.b !== 'cs'; });
   }
-  function paperTotal(p) {
-    var sum = 0;
-    p.parts.forEach(function (x) { sum += x.n * x.s; });
-    return sum;
+  // 卷面部件：单科卷直接用 parts；多科卷（陕西）把各科 parts 摊平，并标注所属科目
+  function paperParts(p) {
+    if (!p.subs) return p.parts;
+    var out = [];
+    p.subs.forEach(function (sd) {
+      sd.parts.forEach(function (x) {
+        var c = {};
+        for (var k in x) if (Object.prototype.hasOwnProperty.call(x, k)) c[k] = x[k];
+        c.sub = sd.name;
+        c.subShort = subShort(sd);
+        out.push(c);
+      });
+    });
+    return out;
   }
   function paperQty(p) {
     var sum = 0;
-    p.parts.forEach(function (x) { sum += x.n; });
+    paperParts(p).forEach(function (x) { sum += x.n * (x.per || 1); });
     return sum;
+  }
+  function paperTotal(p) {
+    var sum = 0;
+    paperParts(p).forEach(function (x) { sum += x.n * x.s * (x.per || 1); });
+    return sum;
+  }
+  function paperPassText(p) {
+    if (!p.subs) return p.pass + ' 分及格';
+    return p.subs.map(function (s) {
+      return subShort(s) + ' ' + s.pass;
+    }).join(' / ') + ' 及格';
+  }
+  // 科目简称：优先用卷面定义的 short（知识 / 能力），否则去掉「安全生产」前缀
+  function subShort(x) {
+    if (x && typeof x === 'object') return x.short || String(x.name || '').replace('安全生产', '');
+    return String(x || '').replace('安全生产', '');
+  }
+  // 案例题：每个案例材料下固定 4 个小问，按组抽（187 组全部是 4 问）
+  function caseSets(per) {
+    var map = {}, keys = [];
+    QS.forEach(function (q) {
+      if (q.b !== 'cs' || !q.m) return;
+      if (!map[q.m]) { map[q.m] = []; keys.push(q.m); }
+      map[q.m].push(q);
+    });
+    var out = [];
+    keys.forEach(function (k) {
+      var g = map[k].slice().sort(function (a, b) { return (a.sn || 0) - (b.sn || 0); });
+      if (g.length >= per) out.push(g.slice(0, per));
+    });
+    return out;
   }
   function round1(x) { return Math.round(x * 10) / 10; }
   function fmtPts(x) { return String(round1(x)); }
@@ -507,7 +578,7 @@
   function gradeReal(ex) {
     var got = 0, right = 0, blank = 0, wrongN = 0;
     var parts = ex.groups.map(function (g) {
-      return { label: g.label, got: 0, total: 0, right: 0, n: 0 };
+      return { label: g.label, got: 0, total: 0, right: 0, n: 0, sub: g.sub || 0 };
     });
     ex.list.forEach(function (id, i) {
       var q = QMAP[id];
@@ -523,36 +594,88 @@
       parts[pi].got += sc;
       if (sc >= full - 0.001) { right++; parts[pi].right++; } else { wrongN++; }
     });
-    return { got: round1(got), total: ex.total, right: right, wrong: wrongN, blank: blank, parts: parts };
+    var subs = null;
+    if (ex.subs && ex.subs.length) {
+      subs = ex.subs.map(function (s, si) {
+        var o = { name: s.name, short: s.short, pass: s.pass, got: 0, total: 0, right: 0, n: 0 };
+        parts.forEach(function (pt) {
+          if (pt.sub !== si) return;
+          o.got += pt.got; o.total += pt.total; o.right += pt.right; o.n += pt.n;
+        });
+        o.got = round1(o.got); o.total = round1(o.total);
+        o.ok = o.got >= s.pass - 0.001;
+        return o;
+      });
+    }
+    return { got: round1(got), total: ex.total, right: right, wrong: wrongN, blank: blank, parts: parts, subs: subs };
   }
 
   function startRealExam(paperId) {
     var p = paperById(paperId);
-    var list = [], pts = {}, groupOf = [], groups = [];
-    for (var i = 0; i < p.parts.length; i++) {
-      var part = p.parts[i];
-      var pool = shuffle(paperPool(part.pool).filter(function (q) { return q.t === part.t; }));
-      if (pool.length < part.n) {
-        toast('题库不足：' + part.label + '需要 ' + part.n + ' 题，现有 ' + pool.length + ' 题');
-        return;
+    var list = [], pts = {}, groupOf = [], groups = [], subOf = [];
+    var defs = p.subs || [{ name: '', pass: p.pass, min: p.min, parts: p.parts }];
+    var subs = [], mins = 0, used = {};
+    // 同一张卷里题目不能重复（知识卷与能力卷的题库池是重叠的）
+    function pick(pool, n) {
+      var out = [];
+      for (var k = 0; k < pool.length && out.length < n; k++) {
+        if (used[pool[k].id]) continue;
+        used[pool[k].id] = 1;
+        out.push(pool[k]);
       }
-      var gi = groups.length;
-      groups.push({
-        label: part.label + ' · ' + part.n + ' 题 × ' + part.s + ' 分',
-        from: list.length, n: part.n
-      });
-      pool.slice(0, part.n).forEach(function (q) {
-        list.push(q.id);
-        pts[q.id] = part.s;
-        groupOf.push(gi);
-      });
+      return out;
     }
+    for (var si = 0; si < defs.length; si++) {
+      var sd = defs[si];
+      var sFrom = groups.length;
+      mins += sd.min || 0;
+      for (var i = 0; i < sd.parts.length; i++) {
+        var part = sd.parts[i];
+        var take = [];
+        if (part.t === 'case') {
+          var per = part.per || 4;
+          var sets = shuffle(caseSets(per));
+          if (sets.length < part.n) {
+            toast('题库不足：' + part.label + '需要 ' + part.n + ' 组，现有 ' + sets.length + ' 组');
+            return;
+          }
+          sets.slice(0, part.n).forEach(function (set) {
+            set.forEach(function (q) { used[q.id] = 1; });
+            take = take.concat(set);
+          });
+        } else {
+          var pool = shuffle(paperPool(part.pool).filter(function (q) { return q.t === part.t; }));
+          take = pick(pool, part.n);
+          if (take.length < part.n) {
+            toast('题库不足：' + part.label + '需要 ' + part.n + ' 题，可抽 ' + take.length + ' 题');
+            return;
+          }
+        }
+        var gi = groups.length;
+        groups.push({
+          label: (p.subs ? subShort(sd) + ' · ' : '') + part.label + ' · ' +
+            (part.t === 'case'
+              ? part.n + ' 组 × ' + (part.per || 4) + ' 问 × ' + part.s + ' 分'
+              : part.n + ' 题 × ' + part.s + ' 分'),
+          from: list.length, n: take.length, sub: si
+        });
+        take.forEach(function (q) {
+          list.push(q.id);
+          pts[q.id] = part.s;
+          groupOf.push(gi);
+          subOf.push(si);
+        });
+      }
+      subs.push({ name: sd.name, short: sd.short, pass: sd.pass, min: sd.min, from: sFrom, to: groups.length });
+    }
+    if (!mins) mins = p.min;
     var now = Date.now();
     exam = {
       real: true, paperId: p.id, name: p.name,
       list: list, pts: pts, groupOf: groupOf, groups: groups,
+      subOf: subOf, subs: p.subs ? subs : null,
       ans: {}, idx: 0, marks: {},
-      endAt: now + p.min * 60000, min: p.min, pass: p.pass,
+      endAt: now + mins * 60000, min: mins, pass: p.pass,
       total: paperTotal(p), startedAt: now, submitted: false
     };
     try { localStorage.setItem(PAPER_KEY, p.id); } catch (e) {}
@@ -572,6 +695,7 @@
     if (!d || !d.real || !d.list || !d.list.length) return null;
     if (!d.endAt || d.endAt <= Date.now()) { clearLiveExam(); return null; }
     if (!d.pts || !d.groupOf || !d.groups) { clearLiveExam(); return null; }
+    if (d.subs && !d.subOf) { clearLiveExam(); return null; }
     for (var i = 0; i < d.list.length; i++) {
       if (!QMAP[d.list[i]]) { clearLiveExam(); return null; }
     }
@@ -584,6 +708,7 @@
       localStorage.setItem(LIVE_KEY, JSON.stringify({
         real: true, paperId: exam.paperId, name: exam.name,
         list: exam.list, pts: exam.pts, groupOf: exam.groupOf, groups: exam.groups,
+        subOf: exam.subOf, subs: exam.subs,
         ans: exam.ans, idx: exam.idx, marks: exam.marks,
         endAt: exam.endAt, min: exam.min, pass: exam.pass,
         total: exam.total, startedAt: exam.startedAt
@@ -616,8 +741,10 @@
       em.textContent = lv.name + ' · 已答 ' + Object.keys(lv.ans || {}).length + ' / ' + lv.list.length + ' 题';
     } else {
       btn.classList.remove('live');
-      sub.textContent = paperQty(p) + ' 题 · ' + p.min + ' 分钟 · ' + p.pass + ' 分及格';
-      em.textContent = '按真实卷面分值判分 · 多选题少选按比例得分 · 到点自动交卷';
+      sub.textContent = paperQty(p) + ' 题 · ' + p.min + ' 分钟 · ' + paperPassText(p);
+      em.textContent = p.subs
+        ? '两科分别计分，两科同时合格才通过 · 到点自动交卷'
+        : '按真实卷面分值判分 · 多选题少选按比例得分 · 到点自动交卷';
     }
   }
 
@@ -634,38 +761,63 @@
     var box = $('paper-list');
     if (!box) return;
     box.innerHTML = PAPERS.map(function (p) {
-      var rows = p.parts.map(function (x) {
-        return '<span class="pi-tag">' + x.label + ' ' + x.n + '×' + x.s + '分</span>';
+      var rows = paperParts(p).map(function (x) {
+        var name = (p.subs ? (x.subShort || subShort(x.sub)) + ' ' : '') + x.label;
+        var cnt = x.t === 'case'
+          ? x.n + '组' + (x.per || 4) + '问×' + x.s + '分'
+          : x.n + '×' + x.s + '分';
+        return '<span class="pi-tag">' + name + ' ' + cnt + '</span>';
       }).join('');
-      var note = p.id === 'hb'
-        ? '<div class="pi-note">题库里的多选题都带图片，本卷两段多选按图片题出（真实卷面为文字多选 + 图片多选）</div>'
-        : '';
+      var note = p.note
+        ? '<div class="pi-note">' + p.note + '</div>'
+        : (p.id === 'hb'
+          ? '<div class="pi-note">题库里的多选题都带图片，本卷两段多选按图片题出（真实卷面为文字多选 + 图片多选）</div>'
+          : '');
       return '<button class="paper-item' + (p.id === paperSel ? ' sel' : '') + '" data-paper="' + p.id + '">' +
         '<b>' + p.name + '</b>' +
-        '<small>' + paperQty(p) + ' 题 · 满分 ' + paperTotal(p) + ' · ' + p.min + ' 分钟 · ' + p.pass + ' 分及格</small>' +
+        '<small>' + paperQty(p) + ' 题 · 满分 ' + paperTotal(p) + ' · ' + p.min + ' 分钟 · ' + paperPassText(p) + '</small>' +
         '<div class="pi-rows">' + rows + '</div>' + note + '</button>';
     }).join('');
     Array.prototype.forEach.call(box.querySelectorAll('.paper-item'), function (el) {
       el.onclick = function () {
         paperSel = el.getAttribute('data-paper');
+        try { localStorage.setItem(PAPER_KEY, paperSel); } catch (e) {}
         renderPaperList();
       };
     });
   }
 
-  function renderScoreParts(parts) {
+  function renderScoreParts(parts, subs) {
     var box = $('score-parts');
     if (!box) return;
     box.hidden = false;
-    box.innerHTML = '<div class="sp-title">分题型得分</div>' + parts.map(function (p) {
+    var html = '';
+    if (subs && subs.length) {
+      html += '<div class="sp-title">分科目得分（两科均需及格）</div>';
+      html += subs.map(function (s) {
+        var pct = s.total ? Math.round(s.got / s.total * 100) : 0;
+        return '<div class="sp-row ' + (s.ok ? 'ok' : 'bad') + '">' +
+          '<span class="sp-name">' + esc(s.name) + '</span>' +
+          '<span class="sp-bar"><i style="width:' + pct + '%"></i></span>' +
+          '<span class="sp-val">' + fmtPts(s.got) + '/' + fmtPts(s.total) + ' · ' +
+          (s.ok ? '过线' : '差 ' + fmtPts(s.pass - s.got)) + '</span>' +
+          '</div>';
+      }).join('');
+      html += '<div class="sp-title sp-title-2">分题型得分</div>';
+    } else {
+      html += '<div class="sp-title">分题型得分</div>';
+    }
+    html += parts.map(function (p) {
       var pct = p.total ? Math.round(p.got / p.total * 100) : 0;
-      var name = p.label.split(' · ')[0];
+      var bits = p.label.split(' · ');
+      var name = subs && subs.length ? bits.slice(0, 2).join(' · ') : bits[0];
       return '<div class="sp-row">' +
         '<span class="sp-name">' + esc(name) + '</span>' +
         '<span class="sp-bar"><i style="width:' + pct + '%"></i></span>' +
         '<span class="sp-val">' + fmtPts(p.got) + '/' + fmtPts(p.total) + ' · 对 ' + p.right + '/' + p.n + '</span>' +
         '</div>';
     }).join('');
+    box.innerHTML = html;
   }
 
   var PRESET = {
@@ -722,9 +874,21 @@
     var total = exam.list.length;
     $('exam-title').textContent = exam.name;
     $('exam-progress').style.width = Math.round((exam.idx + 1) / total * 100) + '%';
-    $('e-type').textContent = typeName(q.t) + (q.t === 'multi' ? ' · 可多选' : '');
+    $('e-type').textContent = typeName(q.t) + (q.t === 'multi' ? ' · 可多选' : '') +
+      (exam.subs && exam.subOf ? ' · ' + subShort(exam.subs[exam.subOf[exam.idx] || 0]) : '');
     $('e-no').textContent = '第 ' + (exam.idx + 1) + ' / ' + total + ' 题' +
       (exam.real ? ' · ' + fmtPts(exam.pts[q.id]) + ' 分' : '');
+    // 案例材料（陕西卷等含案例的卷面）
+    var mBox = $('e-material');
+    if (mBox) {
+      if (q.m && CMAP[q.m]) {
+        mBox.hidden = false;
+        mBox.textContent = CMAP[q.m];
+      } else {
+        mBox.hidden = true;
+        mBox.textContent = '';
+      }
+    }
     var mk = $('e-mark');
     if (mk) {
       if (exam.real) {
@@ -869,19 +1033,32 @@
     var total = exam.list.length;
     var score = exam.real ? res.got : Math.round(right / total * 100);
     var passLine = exam.real ? exam.pass : 60;
-    var pass = score >= passLine;
+    var pass, verdict;
+    if (exam.real && res.subs) {
+      // 陕西等分科卷：每科单独划线，全部达线才算通过
+      var bad = res.subs.filter(function (s) { return !s.ok; });
+      pass = !bad.length;
+      verdict = pass
+        ? '两科均合格'
+        : '不合格 · ' + bad.map(function (s) {
+            return subShort(s) + ' ' + fmtPts(s.got) + '/' + s.pass;
+          }).join(' · ');
+    } else {
+      pass = score >= passLine;
+      verdict = exam.real
+        ? (pass ? '合格 · 达到 ' + passLine + ' 分' : '不合格 · 差 ' + fmtPts(passLine - score) + ' 分')
+        : (pass ? '合格' : '不合格');
+    }
     store.exams.push({
       ts: Date.now(), name: exam.name, score: score, right: right, total: total,
-      min: exam.min, pass: passLine, paper: exam.paperId || null
+      min: exam.min, pass: passLine, paper: exam.paperId || null, passOk: pass
     });
     if (store.exams.length > 30) store.exams = store.exams.slice(-30);
     saveStore();
 
     $('result-sub').textContent = exam.name + ' · ' + new Date().toLocaleString('zh-CN', { hour12: false });
     $('score-num').textContent = exam.real ? fmtPts(score) : score;
-    $('score-verdict').textContent = exam.real
-      ? (pass ? '合格 · 达到 ' + passLine + ' 分' : '不合格 · 差 ' + fmtPts(passLine - score) + ' 分')
-      : (pass ? '合格' : '不合格');
+    $('score-verdict').textContent = verdict;
     $('score-verdict').className = 'verdict-line ' + (pass ? 'ok' : 'bad');
 
     if (exam.real) {
@@ -889,17 +1066,22 @@
       var um = Math.floor(usedSec / 60), us = usedSec % 60;
       $('score-detail').innerHTML =
         '答对 ' + res.right + ' · 答错 ' + res.wrong + ' · 未答 ' + res.blank + ' 题<br>' +
-        '满分 ' + fmtPts(res.total) + ' · 及格 ' + passLine + ' · 限时 ' + exam.min + ' 分钟 · 用时 ' +
-        (um ? um + ' 分 ' : '') + us + ' 秒';
-      renderScoreParts(res.parts);
+        (res.subs
+          ? '总分 ' + fmtPts(res.total) + ' · ' + res.subs.map(function (s) {
+              return subShort(s) + ' ' + fmtPts(s.got) + '/' + fmtPts(s.total) + '（' + s.pass + ' 及格）';
+            }).join(' · ')
+          : '满分 ' + fmtPts(res.total) + ' · 及格 ' + passLine) +
+        ' · 限时 ' + exam.min + ' 分钟 · 用时 ' + (um ? um + ' 分 ' : '') + us + ' 秒';
+      renderScoreParts(res.parts, res.subs);
     } else {
       $('score-parts').hidden = true;
       $('score-detail').innerHTML =
         '答对 ' + right + ' 题 · 答错 ' + (total - right - blank) + ' 题 · 未答 ' + blank + ' 题<br>' +
         '共 ' + total + ' 题 · 限时 ' + exam.min + ' 分钟 · 及格线 60 分';
     }
+    var ringDeg = exam.real && res.total ? Math.min(360, score / res.total * 360) : Math.min(360, score * 3.6);
     $('score-ring').style.background =
-      'conic-gradient(' + (pass ? '#12805c' : '#d92d20') + ' ' + (score * 3.6) + 'deg, #eef1f6 0deg)';
+      'conic-gradient(' + (pass ? '#12805c' : '#d92d20') + ' ' + ringDeg + 'deg, #eef1f6 0deg)';
 
     var wrongIds = exam.list.filter(function (id) {
       var a = exam.ans[id];
