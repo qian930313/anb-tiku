@@ -80,6 +80,8 @@ h1,h2,h3,p{margin:0}
 /* ---------- 题库卡 ---------- */
 /* 第一行「全部题库」整行，第二行三个题库并排 */
 .bank-grid{display:grid;grid-template-columns:1fr;gap:10px}
+/* 案例卡独占整行 */
+.bank-grid .bank-card[data-bank="cs"]{grid-column:1 / -1;border-left:3px solid var(--primary)}
 .bank-card{
   text-align:left;background:var(--card);border:1px solid var(--line);
   border-radius:var(--radius);padding:15px 16px;
@@ -183,6 +185,17 @@ h1,h2,h3,p{margin:0}
   border:1px solid var(--line);border-radius:7px;padding:3px 9px;
 }
 .tag-type{color:var(--primary);background:var(--primary-soft);border-color:#d8e6ff;font-weight:600}
+.q-material{
+  white-space:pre-wrap;word-break:break-word;
+  background:var(--primary-soft);border:1px solid #d8e6ff;border-left:3px solid var(--primary);
+  border-radius:12px;padding:12px 14px;
+  font-size:13.5px;line-height:1.8;color:var(--ink-2);
+  margin:2px 0 4px;
+}
+.q-material::before{
+  content:'📄 案例材料';display:block;font-size:11.5px;font-weight:700;
+  color:var(--primary);margin-bottom:6px;letter-spacing:.5px;
+}
 .q-stem{
   font-size:17px;line-height:1.75;font-weight:500;letter-spacing:.2px;
   white-space:pre-wrap;word-break:break-word;

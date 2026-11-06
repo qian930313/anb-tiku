@@ -6,6 +6,9 @@
   var QS = DATA.questions;
   var QMAP = {};
   QS.forEach(function (q) { QMAP[q.id] = q; });
+  // 案例材料表：q.m → 材料文本
+  var CMAP = {};
+  (DATA.cases || []).forEach(function (c) { CMAP[c.id] = c.material; });
 
   var KEY = 'anb_exam_v1';
   var store = loadStore();
@@ -78,19 +81,23 @@
     all: '全部题库',
     c: '三类题库（理论考核）',
     a: '安管人员B类能力考核题',
-    b: '能力考核题库（B类人员）'
+    b: '能力考核题库（B类人员）',
+    cs: '案例题（材料分析）'
   };
   // 题目卡片/列表里用的短名，避免标签过长
-  var BANK_SHORT = { a: '安管B类考核', b: 'B类人员考核', c: '三类题库' };
+  var BANK_SHORT = { a: '安管B类考核', b: 'B类人员考核', c: '三类题库', cs: '案例题' };
   function bankName(b) {
     return BANK_FULL[b] || BANK_FULL.all;
   }
   function sourceName(q) {
+    if (q.b === 'cs') return SUBJ[q.g] + ' · 案例第' + q.n + '案·第' + (q.sn || 1) + '问';
     if (q.b === 'a' || q.b === 'b') return BANK_SHORT[q.b];
     return SUBJ[q.g] || BANK_SHORT.c;
   }
   function matchBank(q, bank) {
-    if (!bank || bank === 'all') return true;
+    if (!bank) return true;
+    if (bank === 'all') return q.b !== 'cs';   // 全部题库不含案例小问
+    if (bank === 'cs') return q.b === 'cs';
     if (bank === 'a' || bank === 'b' || bank === 'c') return q.b === bank;
     return q.g === bank;
   }
@@ -211,8 +218,18 @@
     $('quiz-progress').style.width = Math.round((ses.idx + 1) / total * 100) + '%';
 
     $('q-type').textContent = typeName(q.t) + (q.t === 'multi' ? ' · 可多选' : '');
-    $('q-source').textContent = sourceName(q) + ' · 第' + q.n + '题';
+    $('q-source').textContent = sourceName(q);
     $('q-stem').textContent = q.q;
+
+    // 案例材料
+    var mBox = $('q-material');
+    if (q.m && CMAP[q.m]) {
+      mBox.hidden = false;
+      mBox.textContent = CMAP[q.m];
+    } else {
+      mBox.hidden = true;
+      mBox.textContent = '';
+    }
 
     var fig = $('q-figure'), im = $('q-img');
     if (q.i) {
@@ -410,9 +427,9 @@
   var examScope = 'ab';
 
   function scopePool() {
-    if (examScope === 'ab') return QS.filter(function (q) { return q.b !== 'c'; });
+    if (examScope === 'ab') return QS.filter(function (q) { return q.b === 'a' || q.b === 'b'; });
     if (examScope === 'c') return QS.filter(function (q) { return q.b === 'c'; });
-    return QS.slice();
+    return QS.filter(function (q) { return q.b !== 'cs'; });   // 考试不含案例小问
   }
 
   function startExam(kind) {
