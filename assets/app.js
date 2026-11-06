@@ -1115,7 +1115,14 @@
       .then(function (res) {
         var cloud = res.data || null;
         var merged = cloud ? mergeStores(store, cloud) : store;
-        if (sigOf(merged) !== before) adoptMerged(merged);
+        // 除了记录本身，断点变了（例如本机留着一条随机抽题的旧断点）也要采纳云端
+        var needAdopt = sigOf(merged) !== before;
+        if (!needAdopt && merged.last) {
+          var lc = store.last || {};
+          needAdopt = merged.last.mode !== lc.mode || merged.last.idx !== lc.idx ||
+                      merged.last.bank !== lc.bank || merged.last.title !== lc.title;
+        }
+        if (needAdopt) adoptMerged(merged);
         var info = {
           cloud: countOf(cloud), sha: res.sha || null, at: Date.now(),
           same: cloud ? (sigOf(merged) === sigOf(cloud)) : false, pushed: false
