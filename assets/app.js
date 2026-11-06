@@ -154,8 +154,9 @@
     var nCount = noteCount();
     $('note-sub').textContent = nCount ? nCount + ' 条批注 · 记下错因好复习' : '还没有批注';
 
-    if (store.last && store.last.list && store.last.list.length) {
-      var l = store.last;
+    var lastValid = validLast(store.last);
+    if (lastValid) {
+      var l = lastValid;
       var pct = Math.min(100, Math.round((l.idx) / l.list.length * 100));
       $('continue-sub').textContent = l.title + ' · ' + Math.min(l.idx + 1, l.list.length) + '/' + l.list.length;
     } else {
@@ -210,8 +211,14 @@
     // 顶栏空间有限，用短名；完整文件夹名在首页题库卡上
     return SUBJ[cfg.bank] || BANK_SHORT[cfg.bank] || bankName(cfg.bank);
   }
+  // 只有「顺序练习」（题库/专项）才记作继续练习的断点；
+  // 随机抽题、错题重做、收藏重做都是一次性的，不能把断点顶掉
+  function validLast(l) {
+    return (l && l.list && l.list.length && l.mode === 'seq') ? l : null;
+  }
   function saveLast() {
     if (!ses) return;
+    if (ses.mode !== 'seq') return;
     store.last = {
       list: ses.list, idx: ses.idx, ans: ses.ans, mode: ses.mode,
       bank: ses.bank, type: ses.type, title: ses.title
@@ -866,8 +873,8 @@
   // 两份学习记录取并集（规则：批注去重拼接 / 收藏并集 / 错题取大 / 练习逐项取大）
   // 练习断点：只有"同一次顺序练习"才比较进度，否则保留本机的，避免被别的设备拽走
   function mergeLast(la, lb) {
-    var a = (la && la.list && la.list.length) ? la : null;
-    var b = (lb && lb.list && lb.list.length) ? lb : null;
+    var a = (la && la.list && la.list.length && la.mode === 'seq') ? la : null;
+    var b = (lb && lb.list && lb.list.length && lb.mode === 'seq') ? lb : null;
     if (!a) return b;
     if (!b) return a;
     var same = a.mode === 'seq' && b.mode === 'seq' && a.bank === b.bank &&
@@ -923,6 +930,7 @@
     store.rec = merged.rec;
     store.exams = merged.exams;
     if (merged.last) store.last = merged.last;
+    else if (store.last && store.last.mode !== 'seq') store.last = null;
     saveStore();
     renderHome();
   }
@@ -1279,8 +1287,8 @@
     });
 
     $('btn-continue').onclick = function () {
-      var l = store.last;
-      if (l && l.list && l.list.length) {
+      var l = validLast(store.last);
+      if (l) {
         startPractice({
           bank: l.bank, type: l.type, mode: l.mode, title: l.title,
           start: Math.min(l.idx, l.list.length - 1), restore: l, listOverride: l.list
